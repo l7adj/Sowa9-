@@ -1,0 +1,101 @@
+:root {
+  --t-instant: 80ms;
+  --t-fast: 160ms;
+  --t-normal: 280ms;
+  --t-slow: 440ms;
+  --t-dramatic: 680ms;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInBottom {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+@keyframes ripple {
+  to { transform: scale(2.4); opacity: 0; }
+}
+
+.animate-fadeIn { animation: fadeIn var(--t-normal) var(--ease-smooth); }
+.animate-fadeInUp { animation: fadeInUp var(--t-normal) var(--ease-emphasized); }
+.animate-scaleIn { animation: scaleIn var(--t-normal) var(--ease-spring); }
+.animate-pop { animation: pop var(--t-fast) var(--ease-spring); }
+.animate-pulse { animation: pulse 2s var(--ease-smooth) infinite; }
+.animate-shake { animation: shake 400ms var(--ease-smooth); }
+
+.stagger > * {
+  opacity: 0;
+  animation: fadeInUp var(--t-normal) var(--ease-emphasized) forwards;
+}
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(7) { animation-delay: 240ms; }
+.stagger > *:nth-child(8) { animation-delay: 280ms; }
+
+.press-scale { transition: transform var(--t-instant) var(--ease-spring); }
+.press-scale:active { transform: scale(0.96); }
+.press-depth {
+  transition: transform var(--t-instant) var(--ease-spring),
+              box-shadow var(--t-fast) var(--ease-smooth);
+}
+.press-depth:active {
+  transform: scale(0.98) translateY(1px);
+  box-shadow: var(--shadow-1);
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, hsla(0,0%,100%,.4), transparent);
+  animation: shimmer 1.6s var(--ease-smooth) infinite;
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

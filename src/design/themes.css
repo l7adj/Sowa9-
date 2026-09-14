@@ -1,0 +1,53 @@
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: hsl(var(--hue-primary), 25%, 6%);
+    --surface-1: hsl(var(--hue-primary), 22%, 9%);
+    --surface-2: hsl(var(--hue-primary), 20%, 13%);
+    --surface-3: hsl(var(--hue-primary), 18%, 18%);
+    --surface-glass: hsla(var(--hue-primary), 25%, 10%, 0.85);
+    --text-strong: hsl(var(--hue-primary), 20%, 96%);
+    --text-normal: hsl(var(--hue-primary), 15%, 75%);
+    --text-muted: hsl(var(--hue-primary), 10%, 55%);
+    --text-disabled: hsl(var(--hue-primary), 8%, 35%);
+    --color-accent: hsl(var(--hue-accent), 92%, 62%);
+    --color-success: hsl(var(--hue-success), 56%, 48%);
+    --color-warn: hsl(var(--hue-warn), 90%, 55%);
+    --color-danger: hsl(var(--hue-danger), 72%, 58%);
+    --color-purple: hsl(var(--hue-purple), 68%, 62%);
+    --shadow-1: 0 1px 2px hsla(0,0%,0%,.20), 0 1px 3px hsla(0,0%,0%,.15);
+    --shadow-2: 0 4px 12px hsla(0,0%,0%,.30), 0 2px 4px hsla(0,0%,0%,.20);
+    --shadow-3: 0 12px 32px hsla(0,0%,0%,.45), 0 4px 8px hsla(0,0%,0%,.30);
+    --shadow-4: 0 20px 48px hsla(0,0%,0%,.60), 0 8px 16px hsla(0,0%,0%,.40);
+    --line: hsl(var(--hue-primary), 15%, 18%);
+    --line-2: hsl(var(--hue-primary), 12%, 14%);
+  }
+  body { color-scheme: dark; }
+}
+
+[data-theme="dark"] {
+  --surface-0: hsl(var(--hue-primary), 25%, 6%);
+  --surface-1: hsl(var(--hue-primary), 22%, 9%);
+  --surface-2: hsl(var(--hue-primary), 20%, 13%);
+  --surface-3: hsl(var(--hue-primary), 18%, 18%);
+  --text-strong: hsl(var(--hue-primary), 20%, 96%);
+  --text-normal: hsl(var(--hue-primary), 15%, 75%);
+  --text-muted: hsl(var(--hue-primary), 10%, 55%);
+}
+
+[data-theme="light"] {
+  --surface-0: hsl(var(--hue-primary), 25%, 99%);
+  --surface-1: hsl(var(--hue-primary), 22%, 97%);
+  --surface-2: hsl(var(--hue-primary), 20%, 95%);
+  --surface-3: hsl(var(--hue-primary), 18%, 92%);
+  --text-strong: hsl(var(--hue-primary), 47%, 10%);
+  --text-normal: hsl(var(--hue-primary), 15%, 33%);
+  --text-muted: hsl(var(--hue-primary), 12%, 45%);
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --text-strong: hsl(var(--hue-primary), 50%, 5%);
+    --text-normal: hsl(var(--hue-primary), 30%, 20%);
+    --line: hsl(var(--hue-primary), 30%, 70%);
+  }
+}

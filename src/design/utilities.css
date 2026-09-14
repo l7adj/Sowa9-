@@ -1,0 +1,57 @@
+.u-hidden { display: none !important; }
+.u-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0;
+  margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+.u-text-strong { color: var(--text-strong); }
+.u-text-muted { color: var(--text-muted); }
+.u-text-accent { color: var(--color-accent); }
+.u-text-success { color: var(--color-success); }
+.u-text-warn { color: var(--color-warn); }
+.u-text-danger { color: var(--color-danger); }
+.u-fw-bold { font-weight: var(--fw-bold); }
+.u-fw-extrabold { font-weight: var(--fw-extrabold); }
+.u-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-bg-surface { background: var(--surface-0); }
+.u-bg-surface-2 { background: var(--surface-2); }
+.u-mt-1 { margin-top: var(--sp-1); }
+.u-mt-2 { margin-top: var(--sp-2); }
+.u-mt-3 { margin-top: var(--sp-3); }
+.u-mb-1 { margin-bottom: var(--sp-1); }
+.u-mb-2 { margin-bottom: var(--sp-2); }
+.u-mb-3 { margin-bottom: var(--sp-3); }
+.u-border { border: 1px solid var(--line); }
+.u-border-accent { border: 2px solid var(--color-accent); }
+.u-rounded-sm { border-radius: var(--r-sm); }
+.u-rounded-md { border-radius: var(--r-md); }
+.u-rounded-lg { border-radius: var(--r-lg); }
+.u-rounded-full { border-radius: var(--r-full); }
+.u-shadow-1 { box-shadow: var(--shadow-1); }
+.u-shadow-2 { box-shadow: var(--shadow-2); }
+.u-shadow-3 { box-shadow: var(--shadow-3); }
+.u-flex { display: flex; }
+.u-flex-col { display: flex; flex-direction: column; }
+.u-items-center { align-items: center; }
+.u-justify-center { justify-content: center; }
+.u-justify-between { justify-content: space-between; }
+.u-gap-1 { gap: var(--sp-1); }
+.u-gap-2 { gap: var(--sp-2); }
+.u-gap-3 { gap: var(--sp-3); }
+.u-clickable {
+  cursor: pointer; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.u-glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+.u-divider { height: 1px; background: var(--line); margin: var(--sp-3) 0; }
+.u-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+}
+.u-dot-success { background: var(--color-success); }
+.u-dot-warn { background: var(--color-warn); }
+.u-dot-danger { background: var(--color-danger); }
+.u-dot-pulse { animation: pulse 2s var(--ease-smooth) infinite; }

@@ -1,0 +1,6 @@
+{
+  "name": "Sowa9 - إدارة مهام السواق",
+  "description": "نظام عام ومرن لإدارة وتوزيع مهام ومناوبات السواق، معالجة النقص، الاستعارة والتسليف بين الفرق، وتحقيق العدالة التامة وحساب الراحة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

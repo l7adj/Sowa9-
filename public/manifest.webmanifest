@@ -1,0 +1,12 @@
+{
+  "name": "Sowa9 — إدارة مهام السواق",
+  "short_name": "Sowa9",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EEF1F6",
+  "theme_color": "#0F172A",
+  "lang": "ar",
+  "dir": "rtl"
+}

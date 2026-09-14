@@ -1,0 +1,112 @@
+:root {
+  --hue-primary: 222;
+  --hue-accent: 217;
+  --hue-success: 152;
+  --hue-warn: 38;
+  --hue-danger: 0;
+  --hue-purple: 262;
+
+  --sat-primary: 47%;
+  --sat-accent: 92%;
+  --sat-success: 56%;
+  --sat-warn: 90%;
+  --sat-danger: 72%;
+  --sat-purple: 68%;
+
+  --surface-0: hsl(var(--hue-primary), 25%, 99%);
+  --surface-1: hsl(var(--hue-primary), 22%, 97%);
+  --surface-2: hsl(var(--hue-primary), 20%, 95%);
+  --surface-3: hsl(var(--hue-primary), 18%, 92%);
+  --surface-glass: hsla(var(--hue-primary), 20%, 100%, 0.85);
+
+  --text-strong: hsl(var(--hue-primary), 47%, 10%);
+  --text-normal: hsl(var(--hue-primary), 15%, 33%);
+  --text-muted: hsl(var(--hue-primary), 12%, 45%);
+  --text-disabled: hsl(var(--hue-primary), 8%, 72%);
+
+  --color-primary: hsl(var(--hue-primary), var(--sat-primary), 12%);
+  --color-accent: hsl(var(--hue-accent), var(--sat-accent), 53%);
+  --color-accent-2: hsl(var(--hue-accent), var(--sat-accent), 47%);
+  --color-accent-soft: hsl(var(--hue-accent), 100%, 96%);
+  --color-success: hsl(var(--hue-success), var(--sat-success), 34%);
+  --color-success-soft: hsl(var(--hue-success), 60%, 93%);
+  --color-warn: hsl(var(--hue-warn), var(--sat-warn), 45%);
+  --color-warn-soft: hsl(var(--hue-warn), 100%, 95%);
+  --color-danger: hsl(var(--hue-danger), var(--sat-danger), 51%);
+  --color-danger-soft: hsl(var(--hue-danger), 85%, 96%);
+  --color-purple: hsl(var(--hue-purple), var(--sat-purple), 50%);
+  --color-purple-soft: hsl(var(--hue-purple), 90%, 96%);
+
+  --shadow-1: 0 1px 2px hsla(222,40%,10%,.04), 0 1px 3px hsla(222,40%,10%,.04);
+  --shadow-2: 0 4px 12px hsla(222,40%,10%,.08), 0 2px 4px hsla(222,40%,10%,.04);
+  --shadow-3: 0 12px 32px hsla(222,40%,10%,.16), 0 4px 8px hsla(222,40%,10%,.08);
+  --shadow-4: 0 20px 48px hsla(222,40%,10%,.28), 0 8px 16px hsla(222,40%,10%,.16);
+
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-full: 999px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  --fs-xs: 0.625rem;
+  --fs-sm: 0.75rem;
+  --fs-base: 0.875rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.0625rem;
+  --fs-xl: 1.25rem;
+  --fs-2xl: 1.5rem;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-extrabold: 800;
+  --fw-black: 900;
+
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.25, 1.2, 0.5, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+  --bg: var(--surface-1);
+  --surface: var(--surface-0);
+  --surface-2: hsl(var(--hue-primary), 20%, 95%);
+  --surface-3: hsl(var(--hue-primary), 18%, 92%);
+  --line: hsl(var(--hue-primary), 18%, 89%);
+  --line-2: hsl(var(--hue-primary), 15%, 92%);
+  --text: var(--text-strong);
+  --text-2: var(--text-normal);
+  --text-3: var(--text-muted);
+  --primary: var(--color-primary);
+  --accent: var(--color-accent);
+  --accent-2: var(--color-accent-2);
+  --accent-soft: var(--color-accent-soft);
+  --success: var(--color-success);
+  --success-soft: var(--color-success-soft);
+  --warn: var(--color-warn);
+  --warn-soft: var(--color-warn-soft);
+  --danger: var(--color-danger);
+  --danger-soft: var(--color-danger-soft);
+  --purple: var(--color-purple);
+  --purple-soft: var(--color-purple-soft);
+  --r: var(--r-md);
+  --sh-1: var(--shadow-1);
+  --sh-2: var(--shadow-2);
+  --sh-3: var(--shadow-3);
+  --sh-4: var(--shadow-4);
+  --ease: var(--ease-smooth);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-multiplier: 0.01; }
+}

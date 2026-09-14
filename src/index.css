@@ -1,0 +1,434 @@
+@import "tailwindcss";
+@import "./design/tokens.css";
+@import "./design/animations.css";
+@import "./design/themes.css";
+@import "./design/utilities.css";
+@import "./design/components.css";
+
+/* Base layout & typography */
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Tahoma, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* TOPBAR */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 14px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-extrabold);
+  letter-spacing: -0.3px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar h1 .logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-black);
+  letter-spacing: -0.5px;
+}
+.topbar .role-tag {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  color: var(--text-2);
+  padding: 4px 9px;
+  background: var(--surface-2);
+  border-radius: 7px;
+}
+.topbar button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-lg);
+  transition: background 0.15s;
+}
+.topbar button:active {
+  background: var(--surface-2);
+}
+
+/* PAGES STACK */
+.pages-stack {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  bottom: calc(62px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+.page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg);
+  will-change: transform, opacity;
+  transition: transform 0.34s var(--ease), opacity 0.28s var(--ease);
+}
+.page.active {
+  transform: translateX(0);
+  opacity: 1;
+  z-index: 2;
+  pointer-events: auto;
+}
+.page.to-left {
+  transform: translateX(-22%);
+  opacity: 0;
+  pointer-events: none;
+}
+.page.to-right {
+  transform: translateX(22%);
+  opacity: 0;
+  pointer-events: none;
+}
+.page.from-left {
+  transform: translateX(-22%);
+  opacity: 0;
+  pointer-events: none;
+}
+.page.from-right {
+  transform: translateX(22%);
+  opacity: 0;
+  pointer-events: none;
+}
+.page-inner {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 12px 100px;
+}
+
+/* DATE BAR */
+.datebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--sh-1);
+  padding: 6px;
+  margin-bottom: 12px;
+  touch-action: pan-y;
+  user-select: none;
+}
+.datebar .nav {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-2xl);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.12s;
+}
+.datebar .nav:active {
+  background: var(--surface-3);
+  transform: scale(0.94);
+}
+.datebar .info {
+  flex: 1;
+  text-align: center;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+.datebar .info:active {
+  background: var(--surface-2);
+}
+.datebar .info .d1 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-extrabold);
+  letter-spacing: -0.3px;
+}
+.datebar .info .d2 {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 1px;
+  font-weight: var(--fw-semibold);
+}
+.datebar .today-btn {
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  display: none;
+}
+.datebar .today-btn.show {
+  display: flex;
+  align-items: center;
+}
+
+/* SECTION */
+.section {
+  margin-bottom: 12px;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--r-sm);
+  transition: background 0.15s;
+}
+.section-head:active {
+  background: rgba(11, 18, 32, 0.04);
+}
+.section-head .title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-extrabold);
+  color: var(--text-2);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-head .count {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.section-head .count.accent {
+  background: var(--accent-soft);
+  color: var(--color-accent);
+}
+.section-head .spacer {
+  flex: 1;
+}
+.section-head .chev {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  transition: transform 0.3s var(--ease);
+}
+.section.closed .section-head .chev {
+  transform: rotate(-90deg);
+}
+.section-body {
+  overflow: hidden;
+  transition: max-height 0.38s var(--ease), opacity 0.28s var(--ease);
+}
+.section.closed .section-body {
+  max-height: 0 !important;
+  opacity: 0;
+}
+
+/* MISSION */
+.mission {
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--sh-1);
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  transition: box-shadow 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.mission.expanded {
+  box-shadow: var(--sh-2);
+  border-color: var(--line);
+}
+.mission-head {
+  padding: 12px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: background 0.15s;
+}
+.mission-head:active {
+  background: var(--surface-2);
+}
+.mission.forest .mission-head {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.mission.indoor .mission-head {
+  box-shadow: inset 3px 0 0 var(--purple);
+}
+.mission.normal .mission-head {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.mission.complete .mission-head {
+  box-shadow: inset 3px 0 0 var(--success);
+}
+.mission.cancelled {
+  opacity: 0.6;
+}
+.mission.cancelled .mission-head {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.mission-head .body {
+  flex: 1;
+  min-width: 0;
+}
+.mission-head .name {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-extrabold);
+  letter-spacing: -0.2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mission-head .name .tag {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.mission-head .name .tag.forest {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.mission-head .name .tag.indoor {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+.mission-head .name .tag.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.mission-head .times {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mission-head .times .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.mission-head .times b {
+  color: var(--text-2);
+  font-weight: var(--fw-bold);
+}
+.mission-head .progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.mission-head .progress .num {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-extrabold);
+  letter-spacing: -0.3px;
+  color: var(--color-accent);
+}
+.mission-head .progress .num.full {
+  color: var(--success);
+}
+.mission-head .progress .bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.mission-head .progress .bar .fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 2px;
+  transition: width 0.3s var(--ease);
+}
+.mission-head .progress .bar .fill.full {
+  background: var(--success);
+}
+.mission-head .arrow {
+  color: var(--text-3);
+  font-size: var(--fs-base);
+  transition: transform 0.25s var(--ease);
+  flex-shrink: 0;
+}
+.mission.expanded .mission-head .arrow {
+  transform: rotate(90deg);
+}
+.mission-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.38s var(--ease);
+}
+.mission.expanded .mission-body {
+  max-height: 2500px;
+}
+.mission-body-inner {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--line-2);
+}
+
+.sheet-h[data-grab] {
+  touch-action: none;
+  cursor: grab;
+}
+.sheet-h[data-grab]:active {
+  cursor: grabbing;
+}
+.sheet.dragging {
+  transition: none;
+}
