@@ -119,13 +119,12 @@ async function computeDriverProfile(driverId) {
     .sort((a, b) => a.at.localeCompare(b.at));
   const vacations = myStatus.filter(s => s.status === 'VACATION');
   const lastVacation = vacations[vacations.length - 1] || null;
-  const forestCycles = new Set();
-  let forestPeriods = 0, normalMissions = 0, multiShiftPeriods = 0;
+  const multiShiftCycles = new Set();
+  let multiShiftPeriods = 0, normalMissions = 0;
   for (const h of history) {
-    if (h.mission.type === 'FOREST') {
-      forestCycles.add(h.occurrence.id);
-      forestPeriods++;
-    } else if (h.periodCode) {
+    const isMulti = Boolean(h.periodCode || h.mission?.type === 'MULTI_SHIFT' || h.mission?.type === 'FOREST' || (h.mission?.periods && h.mission.periods.length > 1));
+    if (isMulti) {
+      multiShiftCycles.add(h.occurrence.id);
       multiShiftPeriods++;
     } else {
       normalMissions++;
@@ -139,8 +138,11 @@ async function computeDriverProfile(driverId) {
     lastVacation: vacationVisible ? lastVacation : null,
     vacationVisible,
     lastMission: history[0] || null,
-    forestCycles: forestCycles.size,
-    forestPeriods, normalMissions, multiShiftPeriods,
+    multiShiftCycles: multiShiftCycles.size,
+    multiShiftPeriods,
+    forestCycles: multiShiftCycles.size,
+    forestPeriods: multiShiftPeriods,
+    normalMissions,
     borrowedMissions,
     myLoans, activeLoan,
     missionMap,
@@ -408,7 +410,7 @@ function renderMissionCard(o, missionMap, driverMap, allAsg, isMgr) {
         <div class="body">
           <div class="name">
             ${esc(m.name)}
-            ${m.type === 'FOREST' ? '<span class="tag forest">🌲 غابة</span>' : isMultiPeriod ? `<span class="tag info">🔄 ${periods.length} فترات</span>` : ''}
+            ${isMultiPeriod ? `<span class="tag info">🔄 ${periods.length} فترات</span>` : ''}
             ${m.locationType === 'indoor' ? '<span class="tag indoor">داخلية</span>' : ''}
             ${o.cancelled ? '<span class="tag danger">ملغى</span>' : ''}
             ${shortage > 0 && !o.cancelled ? `<span class="tag shortage">⚠️ نقص (${shortage})</span>` : ''}
@@ -593,17 +595,20 @@ async function openMissionPicker() {
       body.innerHTML = missions.map(m => {
         const isUsed = used.has(m.id);
         const endStr = fromMinSafe(toMin(m.startTime) + m.durationMinutes);
-        const color = m.type === 'FOREST' ? 'var(--warn)'
+        const periods = getMissionPeriods(m);
+        const isMulti = m.type === 'MULTI_SHIFT' || m.type === 'FOREST' || (periods && periods.length > 1);
+        const color = isMulti ? 'var(--warn)'
           : m.locationType === 'indoor' ? 'var(--purple)' : 'var(--accent)';
         return `
           <div class="dp-row ${isUsed ? 'blocked' : ''}" data-mid="${m.id}">
             <div class="av" style="background:${color}">${esc(m.startTime.slice(0, 2))}</div>
             <div class="body">
-              <div class="n">${esc(m.name)}${m.type === 'FOREST' ? ' 🌲' : ''}</div>
+              <div class="n">${esc(m.name)}${isMulti ? ' 🔄' : ''}</div>
               <div class="tags">
                 <span class="tag info">${esc(m.startTime)} → ${esc(endStr)}</span>
                 <span class="tag">${esc(fmtDurShort(m.durationMinutes))}</span>
                 <span class="tag">${m.driversNeeded} سواق</span>
+                ${isMulti ? `<span class="tag">${periods.length} فترات</span>` : ''}
                 ${isUsed ? '<span class="tag warn">مُضافة بالفعل</span>' : ''}
               </div>
             </div>
@@ -622,7 +627,7 @@ async function openMissionPicker() {
           toast(`تمت إضافة ${esc(m.name)}`, 2200, 'success');
           close();
           const periods = getMissionPeriods(m);
-          if (m.type === 'FOREST' || m.type === 'MULTI_SHIFT' || (periods && periods.length > 1)) {
+          if (m.type === 'MULTI_SHIFT' || m.type === 'FOREST' || (periods && periods.length > 1)) {
             setTimeout(() => openMultiShiftMission(id, m), 300);
           } else {
             setTimeout(() => openDriverPicker(id), 300);
@@ -643,8 +648,12 @@ async function openDriverPicker(occId) {
   const start = buildStart(o.dateIso, o.startTime);
   const end = addMin(start, o.durationMinutes);
   const result = await suggestForTurn({
-    missionId: m.id, periodId: null, occurrenceId: occId,
-    startIso: start.toISOString(), endIso: end.toISOString()
+    missionId: m.id,
+    periodId: null,
+    occurrenceId: occId,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    targetTeamId: m.teamId || null
   });
   const enriched = [];
   for (const q of result.queue) {
@@ -662,20 +671,38 @@ async function openDriverPicker(occId) {
     title: `تعيين في ${esc(m.name)}`,
     subtitle: `${esc(o.startTime)} → ${esc(fromMinSafe(toMin(o.startTime) + o.durationMinutes))}`,
     builder: (body, close) => {
-      let html = `<div class="turn-reason-banner">
-        <div class="trb-icon">🎯</div>
+      let html = `<div class="turn-reason-banner ${result.isBorrow ? 'warn' : ''}">
+        <div class="trb-icon">${result.isBorrow ? '⚠️' : '🎯'}</div>
         <div class="trb-text">${esc(result.reason)}</div>
       </div>`;
+
+      if (result.internalShortage) {
+        html += `
+          <div style="background:#fffbeb;border:1px solid #fef3c7;border-radius:8px;padding:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;color:#92400e;font-weight:600">يوجد نقص في الفريق المعني. يمكنك توثيق النقص أو استعارة سائق:</span>
+            <button id="pickerBorrowBtn" style="padding:4px 10px;background:#2563eb;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer;font-weight:700">
+              🔄 استعارة سائق
+            </button>
+          </div>
+        `;
+      }
+
       const suggested = enriched.find(e => e.isSuggested);
-      const others = enriched.filter(e => !e.isSuggested && e.isAvailable);
+      const sameTeamOthers = enriched.filter(e => !e.isSuggested && e.isAvailable && e.isSameTeam);
+      const otherTeamOthers = enriched.filter(e => !e.isSuggested && e.isAvailable && !e.isSameTeam);
       const blocked = enriched.filter(e => !e.isAvailable);
+
       if (suggested) {
-        html += `<div class="sheet-section">⭐ التالي في الدور (المقترح الأول للعدالة)</div>`;
+        html += `<div class="sheet-section">⭐ المقترح الأول (${suggested.isSameTeam ? 'من داخل الفريق' : 'اقتراح استعارة خارجي'})</div>`;
         html += renderTurnCandidate(suggested, m);
       }
-      if (others.length) {
-        html += `<div class="sheet-section">بعد ذلك في ترتيب الدور</div>`;
-        for (const c of others) html += renderTurnCandidate(c, m);
+      if (sameTeamOthers.length) {
+        html += `<div class="sheet-section">سائقو الفريق المتاحون</div>`;
+        for (const c of sameTeamOthers) html += renderTurnCandidate(c, m);
+      }
+      if (otherTeamOthers.length) {
+        html += `<div class="sheet-section" style="color:#d97706">سائقون متاحون من فرق أخرى (للاستعارة)</div>`;
+        for (const c of otherTeamOthers) html += renderTurnCandidate(c, m);
       }
       if (blocked.length) {
         html += `<div class="sheet-section muted">غير متاحين حالياً</div>`;
@@ -683,10 +710,36 @@ async function openDriverPicker(occId) {
       }
       html += `<button class="btn-ghost" id="cancelBtn" style="margin-top:14px">إلغاء</button>`;
       body.innerHTML = html;
+
       body.querySelector('#cancelBtn').onclick = close;
+
+      body.querySelector('#pickerBorrowBtn')?.addEventListener('click', () => {
+        openNewLoanModal({
+          occurrenceId: occId,
+          missionId: m.id,
+          dateIso: o.dateIso,
+          onDone: () => { close(); refresh(); }
+        });
+      });
+
       body.querySelectorAll('.turn-candidate:not(.blocked)').forEach(el => {
         el.onclick = async () => {
           const did = Number(el.dataset.did);
+          const cand = enriched.find(e => e.driver.id === did);
+          if (cand && !cand.isSameTeam && m.teamId) {
+            // Picked from external team - open loan modal pre-filled
+            openNewLoanModal({
+              fromTeamId: cand.team?.id || cand.driver.teamId,
+              toTeamId: m.teamId,
+              driverId: did,
+              occurrenceId: occId,
+              missionId: m.id,
+              dateIso: o.dateIso,
+              notes: `استعارة لمهمة ${m.name}`,
+              onDone: () => { close(); refresh(); }
+            });
+            return;
+          }
           await assignDriverToMission(occId, m.id, did, result.due?.id || did);
           toast('تم التعيين بنجاح', 2200, 'success');
           close(); refresh();
@@ -735,6 +788,8 @@ function renderTurnCandidate(c, mission) {
             ${esc(c.driver.name)}
             ${c.position === 0 ? '<span class="tag due">صاحب الدور</span>' : ''}
             ${c.isSuggested && c.position !== 0 ? '<span class="tag sugg">التالي</span>' : ''}
+            ${c.team ? `<span class="tag" style="background:#f1f5f9;color:#475569">${esc(c.team.name)}</span>` : ''}
+            ${c.isSameTeam === false ? '<span class="tag" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a">🔄 استعارة</span>' : ''}
           </div>
           <div class="tc-status">
             <span class="tag ${STATUS_CLASS[c.driver.status]}">${esc(STATUS_AR[c.driver.status] || c.driver.status)}</span>
@@ -779,11 +834,8 @@ async function openMultiShiftMission(occId, mission) {
   if (!o) return;
   const isMgr = isManager();
   const periods = getMissionPeriods(mission);
-  const isForest = mission.type === 'FOREST';
-  const title = isForest ? '🌲 مهمة الغابة' : `🔄 ${mission.name}`;
-  const subtitle = isForest
-    ? `${esc(humanDateFull(o.dateIso))} · 17:00 → 17:00 (24 ساعة عبر مسارين)`
-    : `${esc(humanDateFull(o.dateIso))} · ${periods.length} فترات تشغيلية`;
+  const title = `🔄 ${mission.name}`;
+  const subtitle = `${esc(humanDateFull(o.dateIso))} · ${periods.length} فترات تشغيلية (${fmtDur(o.durationMinutes)})`;
 
   sheet({
     title,
@@ -823,8 +875,12 @@ async function openMultiShiftMission(occId, mission) {
           if (asgs.length < (p.driversNeeded || 1)) {
             const r = periodRange(p, o.dateIso);
             const res = await suggestForTurn({
-              missionId: mission.id, periodId: pCode, occurrenceId: occId,
-              startIso: r.start.toISOString(), endIso: r.end.toISOString()
+              missionId: mission.id,
+              periodId: pCode,
+              occurrenceId: occId,
+              startIso: r.start.toISOString(),
+              endIso: r.end.toISOString(),
+              targetTeamId: mission.teamId || null
             });
             suggestions[pCode] = res;
           }
@@ -894,6 +950,20 @@ async function openMultiShiftMission(occId, mission) {
             const period = periods.find(p => (p.code || p.id) === code);
             const sug = suggestions[code];
             if (!sug?.proposed) return toast('لا يوجد اقتراح متاح', 2200, 'error');
+            if (sug.isBorrow && mission.teamId) {
+              openNewLoanModal({
+                fromTeamId: sug.candidate?.team?.id || sug.borrowFromTeam?.id || sug.proposed.teamId,
+                toTeamId: mission.teamId,
+                driverId: sug.proposed.id,
+                occurrenceId: occId,
+                missionId: mission.id,
+                periodId: code,
+                dateIso: o.dateIso,
+                notes: `استعارة سائق لتغطية نقص فترة ${period.name}`,
+                onDone: () => { render(); refresh(); }
+              });
+              return;
+            }
             await assignDriverToPeriod(occId, mission.id, period, sug.proposed.id, sug.due?.id || sug.proposed.id);
             toast(`تم تعيين ${esc(sug.proposed.name)} في ${esc(period.name)}`, 2200, 'success');
             render(); refresh();
@@ -1071,8 +1141,12 @@ async function openMultiShiftAssignDialog({ occId, period, mission, dateIso, onD
   const pCode = period.code || period.id;
   const r = periodRange(period, dateIso);
   const result = await suggestForTurn({
-    missionId: mission.id, periodId: pCode, occurrenceId: occId,
-    startIso: r.start.toISOString(), endIso: r.end.toISOString()
+    missionId: mission.id,
+    periodId: pCode,
+    occurrenceId: occId,
+    startIso: r.start.toISOString(),
+    endIso: r.end.toISOString(),
+    targetTeamId: mission.teamId || null
   });
   const enriched = [];
   for (const q of result.queue) {
@@ -1091,20 +1165,38 @@ async function openMultiShiftAssignDialog({ occId, period, mission, dateIso, onD
     title: `تعيين في ${esc(period.name)}`,
     subtitle: `${esc(period.startTime)} → ${esc(endStr)} · ${esc(fmtDurShort(period.durationMinutes))}`,
     builder: (body, close) => {
-      let html = `<div class="turn-reason-banner">
-        <div class="trb-icon">🎯</div>
+      let html = `<div class="turn-reason-banner ${result.isBorrow ? 'warn' : ''}">
+        <div class="trb-icon">${result.isBorrow ? '⚠️' : '🎯'}</div>
         <div class="trb-text">${esc(result.reason)}</div>
       </div>`;
+
+      if (result.internalShortage) {
+        html += `
+          <div style="background:#fffbeb;border:1px solid #fef3c7;border-radius:8px;padding:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;color:#92400e;font-weight:600">نقص داخلي: لا يوجد سائق متاح من الفريق المعني لهذه الفترة.</span>
+            <button id="shiftDialogBorrowBtn" style="padding:4px 10px;background:#2563eb;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer;font-weight:700">
+              🔄 استعارة من فريق آخر
+            </button>
+          </div>
+        `;
+      }
+
       const suggested = enriched.find(e => e.isSuggested);
-      const others = enriched.filter(e => !e.isSuggested && e.isAvailable);
+      const sameTeamOthers = enriched.filter(e => !e.isSuggested && e.isAvailable && e.isSameTeam);
+      const otherTeamOthers = enriched.filter(e => !e.isSuggested && e.isAvailable && !e.isSameTeam);
       const blocked = enriched.filter(e => !e.isAvailable);
+
       if (suggested) {
-        html += `<div class="sheet-section">⭐ التالي في الدور (المقترح الأول)</div>`;
+        html += `<div class="sheet-section">⭐ المقترح الأول (${suggested.isSameTeam ? 'داخلي' : 'استعارة'})</div>`;
         html += renderTurnCandidate(suggested, mission);
       }
-      if (others.length) {
-        html += `<div class="sheet-section">بعد ذلك في الدور</div>`;
-        for (const c of others) html += renderTurnCandidate(c, mission);
+      if (sameTeamOthers.length) {
+        html += `<div class="sheet-section">سائقو الفريق المتاحون</div>`;
+        for (const c of sameTeamOthers) html += renderTurnCandidate(c, mission);
+      }
+      if (otherTeamOthers.length) {
+        html += `<div class="sheet-section" style="color:#d97706">سائقون متاحون من فرق أخرى (للاستعارة)</div>`;
+        for (const c of otherTeamOthers) html += renderTurnCandidate(c, mission);
       }
       if (blocked.length) {
         html += `<div class="sheet-section muted">غير متاحين حالياً</div>`;
@@ -1112,10 +1204,43 @@ async function openMultiShiftAssignDialog({ occId, period, mission, dateIso, onD
       }
       html += `<button class="btn-ghost" id="cancelBtn" style="margin-top:14px">إلغاء</button>`;
       body.innerHTML = html;
+
       body.querySelector('#cancelBtn').onclick = close;
+
+      body.querySelector('#shiftDialogBorrowBtn')?.addEventListener('click', () => {
+        openNewLoanModal({
+          occurrenceId: occId,
+          missionId: mission.id,
+          periodId: pCode,
+          dateIso: dateIso,
+          onDone: () => {
+            close();
+            onDone && onDone();
+          }
+        });
+      });
+
       body.querySelectorAll('.turn-candidate:not(.blocked)').forEach(el => {
         el.onclick = async () => {
           const did = Number(el.dataset.did);
+          const cand = enriched.find(e => e.driver.id === did);
+          if (cand && !cand.isSameTeam && mission.teamId) {
+            openNewLoanModal({
+              fromTeamId: cand.team?.id || cand.driver.teamId,
+              toTeamId: mission.teamId,
+              driverId: did,
+              occurrenceId: occId,
+              missionId: mission.id,
+              periodId: pCode,
+              dateIso: dateIso,
+              notes: `استعارة سائق لفترة ${period.name}`,
+              onDone: () => {
+                close();
+                onDone && onDone();
+              }
+            });
+            return;
+          }
           await assignDriverToPeriod(occId, mission.id, period, did, result.due?.id || did);
           toast('تم التعيين بنجاح', 2200, 'success');
           close();
@@ -1249,7 +1374,7 @@ function renderPastMission(item, driverMap) {
       <div class="pm-head">
         <div class="pm-name">
           ${esc(m.name)}
-          ${m.type === 'FOREST' ? '<span class="pm-badge forest">🌲 غابة</span>' : isMultiPeriod ? '<span class="pm-badge info">🔄 مناوبات</span>' : ''}
+          ${isMultiPeriod ? '<span class="pm-badge info">🔄 مناوبات</span>' : ''}
           ${m.locationType === 'indoor' ? '<span class="pm-badge indoor">داخلية</span>' : ''}
         </div>
         <div class="pm-time">${esc(o.startTime)} → ${esc(endStr)} · ${esc(fmtDurShort(o.durationMinutes))}</div>
@@ -1399,26 +1524,27 @@ async function openEditTime(occId) {
 async function openDriverProfile(driverId) {
   const profile = await computeDriverProfile(driverId);
   const { driver: d, history, lastVacation, vacationVisible,
-    forestCycles, forestPeriods, normalMissions } = profile;
-  const forestByOcc = {};
+    multiShiftCycles, multiShiftPeriods, normalMissions } = profile;
+  const multiByOcc = {};
   const normalList = [];
   for (const h of history) {
-    if (h.mission.type === 'FOREST') {
-      if (!forestByOcc[h.occurrence.id]) {
-        forestByOcc[h.occurrence.id] = {
+    const isMulti = Boolean(h.periodCode || h.mission?.type === 'MULTI_SHIFT' || h.mission?.type === 'FOREST' || (h.mission?.periods && h.mission.periods.length > 1));
+    if (isMulti) {
+      if (!multiByOcc[h.occurrence.id]) {
+        multiByOcc[h.occurrence.id] = {
           occurrence: h.occurrence, mission: h.mission,
           dateIso: h.dateIso, periods: []
         };
       }
-      forestByOcc[h.occurrence.id].periods.push(h);
+      multiByOcc[h.occurrence.id].periods.push(h);
     } else normalList.push(h);
   }
-  for (const key in forestByOcc) {
-    forestByOcc[key].periods.sort((a, b) => a.start - b.start);
+  for (const key in multiByOcc) {
+    multiByOcc[key].periods.sort((a, b) => a.start - b.start);
   }
   const timeline = [];
-  for (const key in forestByOcc) {
-    const f = forestByOcc[key];
+  for (const key in multiByOcc) {
+    const f = multiByOcc[key];
     timeline.push({
       type: 'forest', dateIso: f.dateIso,
       start: f.periods[0].start, end: f.periods[f.periods.length - 1].end,
@@ -1455,8 +1581,8 @@ async function openDriverProfile(driverId) {
           </div>
         </div>
         <div class="stat-grid-3">
-          <div class="cell"><b>${forestCycles}</b><span>🌲 غابة</span></div>
-          <div class="cell"><b>${normalMissions}</b><span>📋 عادية</span></div>
+          <div class="cell"><b>${multiShiftCycles || 0}</b><span>🔄 مناوبات</span></div>
+          <div class="cell"><b>${normalMissions || 0}</b><span>📋 عادية</span></div>
           <div class="cell"><b>${esc(fmtDurShort(totalMinutes))}</b><span>⏱ إجمالي</span></div>
         </div>
         <div class="profile-block">
@@ -1476,9 +1602,9 @@ async function openDriverProfile(driverId) {
           `}
           <div class="row"><span class="k">إجمالي المهام المنفذة</span>
             <span class="v">${history.length}</span></div>
-          ${forestPeriods > 0 ? `
-            <div class="row"><span class="k">فترات الغابة</span>
-              <span class="v">${forestPeriods} فترة</span>
+          ${multiShiftPeriods > 0 ? `
+            <div class="row"><span class="k">فترات المناوبات</span>
+              <span class="v">${multiShiftPeriods} فترة</span>
             </div>` : ''}
         </div>
         <div class="profile-block">
@@ -1811,18 +1937,25 @@ export async function renderSettingsPage(main) {
       <div class="section-body">
         ${missions.map(m => {
           const endStr = fromMinSafe(toMin(m.startTime) + m.durationMinutes);
-          const color = m.type === 'FOREST' ? 'var(--warn)'
+          const periods = getMissionPeriods(m);
+          const isMulti = m.type === 'MULTI_SHIFT' || m.type === 'FOREST' || (periods && periods.length > 1);
+          const color = isMulti ? 'var(--warn)'
             : m.locationType === 'indoor' ? 'var(--purple)' : 'var(--accent)';
           return `
             <div class="driver-profile-card" data-mid="${m.id}">
               <div class="dpc-head">
                 <div class="av-lg" style="background:${color}">${esc(m.startTime.slice(0, 2))}</div>
                 <div class="dpc-info">
-                  <div class="dpc-name">${esc(m.name)}${m.type === 'FOREST' ? ' 🌲 (غابة)' : ''}${m.isActive === false ? ' [معطّلة]' : ''}</div>
+                  <div class="dpc-name">
+                    ${esc(m.name)}
+                    ${isMulti ? '<span class="tag info" style="font-size:11px;margin-right:4px">🔄 مناوبات</span>' : ''}
+                    ${m.isActive === false ? '<span class="tag bad" style="font-size:11px;margin-right:4px">معطّلة</span>' : ''}
+                  </div>
                   <div class="dpc-tags">
                     <span class="tag">${esc(m.startTime)} → ${esc(endStr)}</span>
                     <span class="tag">${esc(fmtDurShort(m.durationMinutes))}</span>
                     <span class="tag">${m.driversNeeded} سواق</span>
+                    ${isMulti && periods ? `<span class="tag">${periods.length} فترات</span>` : ''}
                   </div>
                 </div>
               </div>
@@ -1935,71 +2068,309 @@ export async function renderSettingsPage(main) {
 async function openMissionEditor(missionId) {
   let m = {
     name: '', startTime: '12:00', durationMinutes: 480,
-    driversNeeded: 1, locationType: 'outdoor', type: 'NORMAL'
+    driversNeeded: 1, locationType: 'outdoor', type: 'NORMAL',
+    teamId: null, periods: null, notes: ''
   };
-  if (missionId) m = await getMission(missionId);
+  if (missionId) {
+    const fetched = await getMission(missionId);
+    if (fetched) m = fetched;
+  }
+
+  const teams = await listTeams();
+
   sheet({
     title: missionId ? 'تعديل المهمة' : 'مهمة جديدة',
     builder: (body, close) => {
-      body.innerHTML = `
-        <div class="form-field"><label>اسم المهمة</label>
-          <input id="n" value="${esc(m.name)}" placeholder="مثال: حراسة، مداهمات، غابة..."></div>
-        <div class="form-field"><label>نوع المهمة</label>
-          <select id="t">
-            <option value="NORMAL" ${m.type === 'NORMAL' ? 'selected' : ''}>عادية (وردية واحدة)</option>
-            <option value="FOREST" ${m.type === 'FOREST' ? 'selected' : ''}>غابة (6 فترات متتابعة على مسارين)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <div class="form-field"><label>وقت البداية (HH:MM)</label>
-            <input id="s" value="${esc(m.startTime)}"></div>
-          <div class="form-field"><label>المدة (دقائق)</label>
-            <input id="d" type="number" value="${m.durationMinutes}"></div>
-        </div>
-        <div class="form-row">
-          <div class="form-field"><label>عدد السواق المطلوبين</label>
-            <input id="cnt" type="number" value="${m.driversNeeded}" min="1"></div>
-          <div class="form-field"><label>طبيعة الموقع</label>
-            <select id="l">
-              <option value="outdoor" ${m.locationType === 'outdoor' ? 'selected' : ''}>خارجية</option>
-              <option value="indoor" ${m.locationType === 'indoor' ? 'selected' : ''}>داخلية</option>
-            </select></div>
-        </div>
-        <button class="btn-primary" id="save">حفظ المهمة</button>
-        ${missionId ? `<button class="btn-danger" id="dis">
-          ${m.isActive === false ? 'إعادة تفعيل المهمة' : 'تعطيل المهمة'}</button>` : ''}
-        <button class="btn-ghost" id="cancelBtn">إلغاء</button>
-      `;
-      body.querySelector('#cancelBtn').onclick = close;
-      body.querySelector('#save').onclick = async () => {
-        const payload = {
-          name: body.querySelector('#n').value.trim(),
-          startTime: body.querySelector('#s').value.trim(),
-          durationMinutes: Number(body.querySelector('#d').value),
-          driversNeeded: Number(body.querySelector('#cnt').value),
-          locationType: body.querySelector('#l').value,
-          type: body.querySelector('#t').value
+      // Local state for periods being edited
+      let currentPeriods = (m.periods && m.periods.length > 0)
+        ? JSON.parse(JSON.stringify(m.periods))
+        : [];
+      let currentMode = (currentPeriods.length > 0 || m.type === 'MULTI_SHIFT' || m.type === 'FOREST')
+        ? 'MULTI_SHIFT'
+        : 'NORMAL';
+
+      const renderEditor = () => {
+        const isMulti = currentMode === 'MULTI_SHIFT';
+        body.innerHTML = `
+          <div class="form-field"><label>اسم المهمة</label>
+            <input id="m_name" value="${esc(m.name)}" placeholder="مثال: حراسة مقر، دورية ليلية، نقل مناوبات...">
+          </div>
+
+          <div class="form-row">
+            <div class="form-field"><label>الفريق المسؤول</label>
+              <select id="m_team">
+                <option value="" ${!m.teamId ? 'selected' : ''}>مشترك (متاح لجميع الفرق)</option>
+                ${teams.map(t => `<option value="${t.id}" ${m.teamId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-field"><label>نمط المهمة</label>
+              <select id="m_mode">
+                <option value="NORMAL" ${!isMulti ? 'selected' : ''}>وردية واحدة بسيطة (Single Shift)</option>
+                <option value="MULTI_SHIFT" ${isMulti ? 'selected' : ''}>مناوبات وفترات متعددة (Multi-Shift)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-field"><label>وقت البداية الإجمالي (HH:MM)</label>
+              <input id="m_start" value="${esc(m.startTime || '12:00')}" placeholder="12:00">
+            </div>
+            <div class="form-field"><label>المدة الإجمالية (دقائق)</label>
+              <input id="m_dur" type="number" value="${m.durationMinutes || 480}" min="15" step="15">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-field"><label>طبيعة الموقع</label>
+              <select id="m_loc">
+                <option value="outdoor" ${m.locationType === 'outdoor' ? 'selected' : ''}>ميدانية / خارجية</option>
+                <option value="indoor" ${m.locationType === 'indoor' ? 'selected' : ''}>داخلية / مقر</option>
+              </select>
+            </div>
+            ${!isMulti ? `
+              <div class="form-field"><label>عدد السواق المطلوبين</label>
+                <input id="m_single_drivers" type="number" value="${m.driversNeeded || 1}" min="1">
+              </div>
+            ` : `
+              <div class="form-field"><label>ملاحظات إضافية</label>
+                <input id="m_notes" value="${esc(m.notes || '')}" placeholder="تعليمات أو تفاصيل...">
+              </div>
+            `}
+          </div>
+
+          ${isMulti ? `
+            <div style="margin:16px 0 10px;padding:12px;background:var(--card-bg, #f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:10px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <b style="font-size:14px;color:var(--text)">⏱ فترات ومناوبات المهمة (${currentPeriods.length})</b>
+                <button type="button" id="addPeriodBtn" style="padding:6px 12px;background:var(--accent,#2563eb);color:#fff;border:0;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">
+                  ➕ إضافة فترة
+                </button>
+              </div>
+
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+                <span style="font-size:11px;color:var(--text-muted);align-self:center">قوالب جاهزة:</span>
+                <button type="button" class="tag" id="tpl3Shifts" style="cursor:pointer;background:#e0e7ff;color:#3730a3;border:0">3 ورديات متتابعة (24 س)</button>
+                <button type="button" class="tag" id="tpl12h" style="cursor:pointer;background:#e0e7ff;color:#3730a3;border:0">دورية 12 ساعة (فترتين)</button>
+                <button type="button" class="tag" id="tplForest" style="cursor:pointer;background:#e0e7ff;color:#3730a3;border:0">مساران 24 س (Alpha + MO)</button>
+              </div>
+
+              <div id="periodsList" style="display:flex;flex-direction:column;gap:8px">
+                ${currentPeriods.map((p, idx) => `
+                  <div class="period-edit-card" data-pidx="${idx}" style="background:#fff;border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:10px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                      <span style="font-weight:700;font-size:12px">فترة #${idx + 1}</span>
+                      <button type="button" class="del-period-btn" data-del="${idx}" style="background:transparent;color:#dc2626;border:0;cursor:pointer;font-size:12px;padding:2px 6px">
+                        🗑️ حذف
+                      </button>
+                    </div>
+                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:6px">
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">اسم الفترة</label>
+                        <input class="p-name" value="${esc(p.name)}" placeholder="مثال: وردية الليل" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                      </div>
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">البداية</label>
+                        <input class="p-start" value="${esc(p.startTime)}" placeholder="17:00" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                      </div>
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">المدة (دقائق)</label>
+                        <input class="p-dur" type="number" value="${p.durationMinutes || 360}" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                      </div>
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">سواق مطلوبين</label>
+                        <input class="p-drivers" type="number" min="1" value="${p.driversNeeded || 1}" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                      </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">المسار / الرمز (اختياري)</label>
+                        <input class="p-track" value="${esc(p.track || '')}" placeholder="مثال: Alpha، دورية 1..." style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                      </div>
+                      <div>
+                        <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--text-muted)">إزاحة اليوم</label>
+                        <select class="p-day" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px">
+                          <option value="0" ${(p.dayOffset || 0) === 0 ? 'selected' : ''}>نفس يوم البدء (0)</option>
+                          <option value="1" ${(p.dayOffset || 0) === 1 ? 'selected' : ''}>اليوم التالي (+1)</option>
+                          <option value="2" ${(p.dayOffset || 0) === 2 ? 'selected' : ''}>بعد يومين (+2)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">
+            <button class="btn-primary" id="saveMissionBtn">حفظ المهمة</button>
+            ${missionId ? `
+              <button class="btn-danger" id="disMissionBtn">
+                ${m.isActive === false ? 'إعادة تفعيل المهمة' : 'تعطيل المهمة'}
+              </button>
+            ` : ''}
+            <button class="btn-ghost" id="cancelEditorBtn">إلغاء</button>
+          </div>
+        `;
+
+        // Sync inputs from periods if currently rendered
+        const collectPeriodsFromDOM = () => {
+          if (currentMode !== 'MULTI_SHIFT') return;
+          const cards = body.querySelectorAll('.period-edit-card');
+          currentPeriods = Array.from(cards).map((card, idx) => {
+            return {
+              id: currentPeriods[idx]?.id || `P-${idx + 1}`,
+              code: currentPeriods[idx]?.code || `P-${idx + 1}`,
+              name: card.querySelector('.p-name').value.trim() || `فترة ${idx + 1}`,
+              startTime: card.querySelector('.p-start').value.trim() || '12:00',
+              durationMinutes: Number(card.querySelector('.p-dur').value) || 360,
+              driversNeeded: Number(card.querySelector('.p-drivers').value) || 1,
+              track: card.querySelector('.p-track').value.trim() || null,
+              dayOffset: Number(card.querySelector('.p-day').value) || 0,
+              orderIndex: idx
+            };
+          });
         };
-        if (!payload.name) return toast('اسم المهمة مطلوب', 2200, 'error');
-        if (!/^\d{1,2}:\d{2}$/.test(payload.startTime)) return toast('صيغة الوقت غير صالحة (مثال 12:00)', 2200, 'error');
-        try {
-          if (missionId) await editMission(missionId, payload);
-          else await createMission(payload);
-          toast('تم حفظ المهمة بنجاح', 2200, 'success');
+
+        // Event listeners
+        body.querySelector('#m_mode').onchange = (e) => {
+          collectPeriodsFromDOM();
+          currentMode = e.target.value;
+          if (currentMode === 'MULTI_SHIFT' && currentPeriods.length === 0) {
+            currentPeriods = [
+              { id: 'P-1', code: 'P-1', name: 'الفترة 1', startTime: '17:00', durationMinutes: 360, driversNeeded: 1, dayOffset: 0, orderIndex: 0 },
+              { id: 'P-2', code: 'P-2', name: 'الفترة 2', startTime: '23:00', durationMinutes: 360, driversNeeded: 1, dayOffset: 0, orderIndex: 1 }
+            ];
+          }
+          renderEditor();
+        };
+
+        body.querySelector('#addPeriodBtn')?.addEventListener('click', () => {
+          collectPeriodsFromDOM();
+          const nextIdx = currentPeriods.length;
+          currentPeriods.push({
+            id: `P-${nextIdx + 1}`,
+            code: `P-${nextIdx + 1}`,
+            name: `فترة ${nextIdx + 1}`,
+            startTime: '12:00',
+            durationMinutes: 360,
+            driversNeeded: 1,
+            dayOffset: 0,
+            track: null,
+            orderIndex: nextIdx
+          });
+          renderEditor();
+        });
+
+        body.querySelectorAll('.del-period-btn').forEach(btn => {
+          btn.onclick = () => {
+            collectPeriodsFromDOM();
+            const delIdx = Number(btn.dataset.del);
+            currentPeriods.splice(delIdx, 1);
+            renderEditor();
+          };
+        });
+
+        body.querySelector('#tpl3Shifts')?.addEventListener('click', () => {
+          currentPeriods = [
+            { id: 'S1', code: 'S1', name: 'وردية المساء', startTime: '17:00', durationMinutes: 480, driversNeeded: 1, dayOffset: 0, orderIndex: 0 },
+            { id: 'S2', code: 'S2', name: 'وردية الليل والفجر', startTime: '01:00', durationMinutes: 480, driversNeeded: 1, dayOffset: 1, orderIndex: 1 },
+            { id: 'S3', code: 'S3', name: 'وردية الصباح والظهر', startTime: '09:00', durationMinutes: 480, driversNeeded: 1, dayOffset: 1, orderIndex: 2 }
+          ];
+          body.querySelector('#m_dur').value = '1440';
+          body.querySelector('#m_start').value = '17:00';
+          renderEditor();
+        });
+
+        body.querySelector('#tpl12h')?.addEventListener('click', () => {
+          currentPeriods = [
+            { id: 'P-NIGHT', code: 'P-NIGHT', name: 'دورية أول الليل', startTime: '18:00', durationMinutes: 360, driversNeeded: 2, dayOffset: 0, orderIndex: 0 },
+            { id: 'P-DAWN', code: 'P-DAWN', name: 'دورية الفجر', startTime: '00:00', durationMinutes: 360, driversNeeded: 2, dayOffset: 1, orderIndex: 1 }
+          ];
+          body.querySelector('#m_dur').value = '720';
+          body.querySelector('#m_start').value = '18:00';
+          renderEditor();
+        });
+
+        body.querySelector('#tplForest')?.addEventListener('click', () => {
+          currentPeriods = [
+            { id: 'ALPHA-1', code: 'ALPHA-1', name: 'Alpha — بداية', track: 'ALPHA', startTime: '17:00', durationMinutes: 360, dayOffset: 0, driversNeeded: 1, orderIndex: 0 },
+            { id: 'ALPHA-2', code: 'ALPHA-2', name: 'Alpha — فجر', track: 'ALPHA', startTime: '05:00', durationMinutes: 360, dayOffset: 1, driversNeeded: 1, orderIndex: 1 },
+            { id: 'ALPHA-3', code: 'ALPHA-3', name: 'Alpha — ظهر', track: 'ALPHA', startTime: '11:00', durationMinutes: 360, dayOffset: 1, driversNeeded: 1, orderIndex: 2 },
+            { id: 'MO-1', code: 'MO-1', name: 'MO — بداية', track: 'MO', startTime: '17:00', durationMinutes: 330, dayOffset: 0, driversNeeded: 1, orderIndex: 3 },
+            { id: 'MO-2', code: 'MO-2', name: 'MO — صباح', track: 'MO', startTime: '07:30', durationMinutes: 270, dayOffset: 1, driversNeeded: 1, orderIndex: 4 },
+            { id: 'MO-3', code: 'MO-3', name: 'MO — ظهر', track: 'MO', startTime: '12:30', durationMinutes: 270, dayOffset: 1, driversNeeded: 1, orderIndex: 5 }
+          ];
+          body.querySelector('#m_dur').value = '1440';
+          body.querySelector('#m_start').value = '17:00';
+          renderEditor();
+        });
+
+        body.querySelector('#cancelEditorBtn').onclick = close;
+
+        body.querySelector('#saveMissionBtn').onclick = async () => {
+          collectPeriodsFromDOM();
+          const name = body.querySelector('#m_name').value.trim();
+          const startTime = body.querySelector('#m_start').value.trim();
+          const durationMinutes = Number(body.querySelector('#m_dur').value);
+          const locationType = body.querySelector('#m_loc').value;
+          const teamVal = body.querySelector('#m_team').value;
+          const teamId = teamVal ? Number(teamVal) : null;
+          const notes = body.querySelector('#m_notes')?.value.trim() || '';
+
+          if (!name) return toast('اسم المهمة مطلوب', 2200, 'error');
+          if (!/^\d{1,2}:\d{2}$/.test(startTime)) {
+            return toast('صيغة وقت البداية غير صالحة (مثال 12:00)', 2200, 'error');
+          }
+
+          let finalPeriods = null;
+          let driversNeeded = 1;
+
+          if (currentMode === 'MULTI_SHIFT') {
+            if (currentPeriods.length === 0) {
+              return toast('يجب إضافة فترة واحدة على الأقل في نمط المناوبات', 2200, 'error');
+            }
+            finalPeriods = currentPeriods;
+            driversNeeded = finalPeriods.reduce((sum, p) => sum + (Number(p.driversNeeded) || 1), 0);
+          } else {
+            driversNeeded = Number(body.querySelector('#m_single_drivers').value) || 1;
+          }
+
+          const payload = {
+            name,
+            startTime,
+            durationMinutes,
+            locationType,
+            teamId,
+            notes,
+            type: currentMode === 'MULTI_SHIFT' ? 'MULTI_SHIFT' : 'NORMAL',
+            periods: finalPeriods,
+            driversNeeded
+          };
+
+          try {
+            if (missionId) await editMission(missionId, payload);
+            else await createMission(payload);
+            toast('تم حفظ المهمة بنجاح', 2200, 'success');
+            close(); refresh();
+          } catch (e) {
+            toast(e.message, 2200, 'error');
+          }
+        };
+
+        body.querySelector('#disMissionBtn')?.addEventListener('click', async () => {
+          if (m.isActive === false) {
+            await editMission(missionId, { isActive: true });
+            toast('تمت إعادة تفعيل المهمة', 2200, 'success');
+          } else {
+            if (!window.confirm('هل أنت متأكد من تعطيل هذه المهمة؟ لن يتم حذف تاريخها السابق.')) return;
+            await disableMission(missionId);
+            toast('تم تعطيل المهمة', 2200, 'warn');
+          }
           close(); refresh();
-        } catch (e) { toast(e.message, 2200, 'error'); }
+        });
       };
-      body.querySelector('#dis')?.addEventListener('click', async () => {
-        if (m.isActive === false) {
-          await editMission(missionId, { isActive: true });
-          toast('تمت إعادة تفعيل المهمة', 2200, 'success');
-        } else {
-          if (!window.confirm('هل أنت متأكد من تعطيل هذه المهمة؟ لن يتم حذف تاريخها السابق.')) return;
-          await disableMission(missionId);
-          toast('تم تعطيل المهمة', 2200, 'warn');
-        }
-        close(); refresh();
-      });
+
+      renderEditor();
     }
   });
 }

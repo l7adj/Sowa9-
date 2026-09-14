@@ -6,7 +6,7 @@ import { requireWrite } from '../core/auth.js';
 export const MISSION_TYPE = {
   NORMAL: 'NORMAL',
   MULTI_SHIFT: 'MULTI_SHIFT',
-  FOREST: 'FOREST'
+  FOREST: 'MULTI_SHIFT' // Alias for backward-compatibility with previously seeded data
 };
 
 export const SAMPLE_CATALOG = [

@@ -11,7 +11,7 @@ async function init() {
     await openDB();
     await ensureDefaults();
 
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+    if ('serviceWorker' in navigator && import.meta.env.PROD) {
       try {
         await navigator.serviceWorker.register('/sw.js');
       } catch {}

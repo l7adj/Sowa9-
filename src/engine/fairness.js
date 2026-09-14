@@ -6,6 +6,7 @@ import { listByOccurrence, ASG_STATUS } from '../domain/assignments.js';
 import { getSetting } from '../core/auth.js';
 import { fmtDurShort, relativeDay } from '../core/clock.js';
 import { periodRange } from './shared-transport.js';
+import { getMission } from '../domain/missions.js';
 
 export async function evaluateDriverForShift({
   driver,
@@ -209,6 +210,7 @@ export async function suggestForTurn({
   occurrenceId = null,
   startIso,
   endIso,
+  targetTeamId = null,
   excludeIds = []
 }) {
   const restMinHours = await getSetting('restMinHours') || 8;
@@ -216,13 +218,35 @@ export async function suggestForTurn({
   const startDate = new Date(startIso);
   const endDate = new Date(endIso);
 
-  const allDrivers = await listDrivers();
+  // Resolve target team from parameters or mission
+  let effectiveTargetTeamId = targetTeamId;
+  let mission = null;
+  if (missionId) {
+    try {
+      mission = await getMission(missionId);
+      if (!effectiveTargetTeamId && mission?.teamId) {
+        effectiveTargetTeamId = mission.teamId;
+      }
+    } catch {}
+  }
+
+  const [allDrivers, teams] = await Promise.all([
+    listDrivers(),
+    listTeams()
+  ]);
+  const teamMap = new Map(teams.map(t => [t.id, t]));
+  const targetTeam = effectiveTargetTeamId ? teamMap.get(Number(effectiveTargetTeamId)) : null;
+
   const allIds = allDrivers.map(d => d.id);
   await ensureQueue(missionId, periodId, allIds);
 
   const info = await getTurnInfo(missionId, periodId);
   if (!info) {
-    return { due: null, proposed: null, reason: 'تعذر تحميل قائمة الدور', queue: [], missed: null, warning: null };
+    return {
+      due: null, proposed: null, reason: 'تعذر تحميل قائمة الدور',
+      queue: [], available: [], sameTeamAvailable: [], otherTeamsAvailable: [],
+      blocked: [], missed: null, warning: null, isBorrow: false
+    };
   }
 
   const evaluated = [];
@@ -234,11 +258,14 @@ export async function suggestForTurn({
       restMinMinutes,
       occurrenceId,
       periodId,
+      targetTeamId: effectiveTargetTeamId,
       excludeIds
     });
+    const driverTeam = teamMap.get(item.driver.teamId) || { name: 'الفريق الرئيسي', id: item.driver.teamId || 1 };
     evaluated.push({
       ...check,
       driver: item.driver,
+      team: driverTeam,
       position: item.position,
       isDue: item.isDue,
       count: item.count,
@@ -247,58 +274,137 @@ export async function suggestForTurn({
   }
 
   const due = evaluated[0];
+  const sameTeamAvailable = evaluated.filter(e => e.isAvailable && e.isSameTeam);
+  const otherTeamsAvailable = evaluated.filter(e => e.isAvailable && !e.isSameTeam);
   const available = evaluated.filter(e => e.isAvailable);
   const blocked = evaluated.filter(e => !e.isAvailable);
 
-  if (due && due.isAvailable) {
+  // Sorting helper by rest sufficiency and rest duration
+  const sortCandidates = (list) => {
+    return [...list].sort((a, b) => {
+      if (a.restOk !== b.restOk) return a.restOk ? -1 : 1;
+      const ra = a.restMinutes == null ? 99999 : a.restMinutes;
+      const rb = b.restMinutes == null ? 99999 : b.restMinutes;
+      return rb - ra;
+    });
+  };
+
+  const internalShortage = Boolean(effectiveTargetTeamId && sameTeamAvailable.length === 0);
+  const netShortage = available.length === 0 ? 1 : 0;
+
+  // Case 1: The designated due driver is available and belongs to the target team (or mission has no team restriction)
+  if (due && due.isAvailable && (!effectiveTargetTeamId || due.isSameTeam)) {
     return {
       due: due.driver,
       proposed: due.driver,
+      candidate: due,
+      isBorrow: false,
+      borrowFromTeam: null,
       reason: buildReason(due, true),
       queue: evaluated,
       available,
+      sameTeamAvailable,
+      otherTeamsAvailable,
       blocked,
+      internalShortage: false,
+      netShortage: 0,
       missed: null,
       warning: !due.restOk ? `تحذير: ${due.reasonAr}` : null
     };
   }
 
-  const firstAvailable = available[0];
-  if (!firstAvailable) {
+  // Case 2: Due driver is not available (or is external), but target team has other available drivers
+  if (sameTeamAvailable.length > 0) {
+    const internalCandidate = sameTeamAvailable[0];
     return {
       due: due?.driver || null,
-      proposed: null,
-      reason: due ? `${due.driver.name} صاحب الدور لكنه ${due.reasonAr}، ولا بديل متاح` : 'لا يوجد سائق متاح حالياً',
+      proposed: internalCandidate.driver,
+      candidate: internalCandidate,
+      isBorrow: false,
+      borrowFromTeam: null,
+      reason: buildReason(internalCandidate, false, due, targetTeam),
       queue: evaluated,
-      available: [],
+      available,
+      sameTeamAvailable,
+      otherTeamsAvailable,
       blocked,
-      missed: due ? { driverId: due.driver.id, reason: due.reasonAr } : null,
-      warning: null
+      internalShortage: false,
+      netShortage: 0,
+      missed: (due && due.isSameTeam) ? { driverId: due.driver.id, reason: due.reasonAr } : null,
+      warning: !internalCandidate.restOk ? `تحذير: ${internalCandidate.reasonAr}` : null
     };
   }
 
+  // Case 3: Target team has NO available driver, but an external team driver is available (BORROW PROPOSAL)
+  if (otherTeamsAvailable.length > 0) {
+    const sortedBorrow = sortCandidates(otherTeamsAvailable);
+    const borrowCandidate = sortedBorrow[0];
+    const teamName = targetTeam ? targetTeam.name : 'الفريق المعني';
+    const reasonText = `⚠️ نقص في ${teamName}: اقتراح استعارة ${borrowCandidate.driver.name} من ${borrowCandidate.team.name} لعدم توفر سائق بديل داخل الفريق`;
+
+    return {
+      due: due?.driver || null,
+      proposed: borrowCandidate.driver,
+      candidate: borrowCandidate,
+      isBorrow: true,
+      borrowFromTeam: borrowCandidate.team,
+      needsLoan: true,
+      reason: reasonText,
+      queue: evaluated,
+      available,
+      sameTeamAvailable,
+      otherTeamsAvailable,
+      blocked,
+      internalShortage: true,
+      netShortage: 0,
+      missed: due ? { driverId: due.driver.id, reason: due.reasonAr } : null,
+      warning: !borrowCandidate.restOk ? `تحذير: ${borrowCandidate.reasonAr}` : null
+    };
+  }
+
+  // Case 4: No driver available at all (neither internal nor external)
+  const teamLabel = targetTeam ? `في ${targetTeam.name}` : 'حالياً';
+  const emptyReason = due
+    ? `عجز في السائقين: ${due.driver.name} صاحب الدور ${due.reasonAr}، ولا يوجد سائق متاح ${teamLabel} أو من الفرق الزميلة`
+    : `عجز كلي في القوة البشرية: لا يوجد أي سائق متاح ${teamLabel} أو من الفرق الزميلة`;
+
   return {
     due: due?.driver || null,
-    proposed: firstAvailable.driver,
-    reason: buildReason(firstAvailable, false, due),
+    proposed: null,
+    candidate: null,
+    isBorrow: false,
+    borrowFromTeam: null,
+    reason: emptyReason,
     queue: evaluated,
-    available,
+    available: [],
+    sameTeamAvailable: [],
+    otherTeamsAvailable: [],
     blocked,
+    internalShortage: true,
+    netShortage: 1,
     missed: due ? { driverId: due.driver.id, reason: due.reasonAr } : null,
-    warning: !firstAvailable.restOk ? `تحذير: ${firstAvailable.reasonAr}` : null
+    warning: null
   };
 }
 
-function buildReason(candidate, isDue, due) {
+function buildReason(candidate, isDue, due, targetTeam = null) {
   const parts = [];
-  if (isDue) parts.push(`${candidate.driver.name} هو صاحب الدور الحالي`);
-  else {
-    parts.push(`${candidate.driver.name} هو التالي في الدور`);
-    if (due) parts.push(`${due.driver.name} (صاحب الدور) ${due.reasonAr}`);
+  if (isDue) {
+    parts.push(`${candidate.driver.name} هو صاحب الدور الحالي`);
+  } else {
+    parts.push(`${candidate.driver.name} هو البديل المتاح في الدور`);
+    if (due) {
+      parts.push(`${due.driver.name} (صاحب الدور) ${due.reasonAr}`);
+    }
+  }
+  if (targetTeam && candidate.isSameTeam) {
+    parts.push(`من أعضاء ${targetTeam.name}`);
   }
   if (candidate.lastDone) {
     parts.push(`آخر تنفيذ: ${relativeDay(candidate.lastDone.substring(0, 10))}`);
-  } else parts.push('لم يعمل هذه المهمة من قبل');
+  } else {
+    parts.push('لم يعمل هذه المهمة من قبل');
+  }
   if (candidate.count > 0) parts.push(`${candidate.count} مرة سابقة`);
   if (candidate.restMinutes !== null && candidate.restMinutes !== undefined) {
     parts.push(`راحة ${fmtDurShort(candidate.restMinutes)}`);
