@@ -8,7 +8,7 @@ import { listLoans, listActiveLoans, listUnresolvedShortages, recordShortage } f
 import { isDatabaseEmpty, seedDemoDataset } from '../domain/demo.js';
 import { periodRange } from '../engine/shared-transport.js';
 import { isManager, isLeader } from '../core/auth.js';
-import { sheet, toast, refresh, attachRipple } from './helpers.js';
+import { sheet, toast, refresh, attachRipple, esc } from './helpers.js';
 import {
   todayIso, addDays, humanDate, humanDateFull, dayNameAr, isToday,
   fmtDurShort, toMin, fromMinSafe, buildStart, addMin, nowIso
