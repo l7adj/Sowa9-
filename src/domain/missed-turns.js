@@ -6,19 +6,55 @@ import { requireWrite } from '../core/auth.js';
 export const MISSED_POLICY = { RECLAIM:'RECLAIM', NORMAL:'NORMAL' };
 
 export async function recordMissed({
-  driverId, missionId, periodId = null,
-  dateIso, reason, substitutedBy = null,
+  driverId,
+  dueDriverId = null,
+  plannedDriverId = null,
+  actualDriverId = null,
+  missionId,
+  periodId = null,
+  occurrenceId = null,
+  dateIso,
+  reason,
+  substitutedBy = null,
   policy = MISSED_POLICY.RECLAIM
 }) {
   requireWrite('missed.record');
+  const dId = Number(dueDriverId || driverId);
+  const mId = Number(missionId);
+  const occId = occurrenceId ? Number(occurrenceId) : null;
+  const pId = periodId ? String(periodId) : null;
+  const subId = actualDriverId ? Number(actualDriverId) : (substitutedBy ? Number(substitutedBy) : null);
+  const planId = plannedDriverId ? Number(plannedDriverId) : subId;
+
+  // Prevent duplicate un-resolved missed record for the same occurrence + period + driver
+  const allRows = await all('missed_turns');
+  const exists = allRows.find(r =>
+    Number(r.driverId) === dId &&
+    Number(r.missionId) === mId &&
+    (occId ? Number(r.occurrenceId) === occId : r.dateIso === dateIso) &&
+    String(r.periodId || '') === String(pId || '') &&
+    !r.resolved
+  );
+  if (exists) return exists.id;
+
   const id = await put('missed_turns', {
-    driverId, missionId, periodId: periodId ?? null,
-    dateIso, reason, substitutedBy,
-    returnPolicy: policy, resolved: false, resolution: null,
+    driverId: dId,
+    dueDriverId: dId,
+    plannedDriverId: planId,
+    actualDriverId: subId,
+    substitutedBy: subId,
+    missionId: mId,
+    periodId: pId,
+    occurrenceId: occId,
+    dateIso,
+    reason: reason || 'تنفيذ بواسطة بديل',
+    returnPolicy: policy,
+    resolved: false,
+    resolution: null,
     createdAt: nowIso()
   });
   await audit({ entity:'missed_turns', entityId:id, action:'record',
-    newValue:{ driverId, missionId, dateIso, reason, policy } });
+    newValue:{ driverId: dId, missionId: mId, occurrenceId: occId, periodId: pId, dateIso, reason, policy } });
   return id;
 }
 
@@ -30,7 +66,8 @@ export async function listUnresolved() {
 
 export async function listDriverUnresolved(driverId) {
   const rows = await all('missed_turns');
-  return rows.filter(r => r.driverId === driverId && !r.resolved);
+  return rows.filter(r => Number(r.driverId) === Number(driverId) && !r.resolved)
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
 }
 
 export async function setPolicy(missedId, policy) {
@@ -55,9 +92,9 @@ export async function resolveMissed({ missedId, resolution = 'RECLAIMED', note =
 export async function hasReclaimPriority(driverId, missionId, periodId = null) {
   const rows = await all('missed_turns');
   return rows.find(r =>
-    r.driverId === Number(driverId) &&
-    r.missionId === Number(missionId) &&
-    (!periodId || !r.periodId || r.periodId === String(periodId)) &&
+    Number(r.driverId) === Number(driverId) &&
+    Number(r.missionId) === Number(missionId) &&
+    (!periodId || !r.periodId || String(r.periodId) === String(periodId)) &&
     r.returnPolicy === MISSED_POLICY.RECLAIM &&
     !r.resolved
   ) || null;
@@ -66,26 +103,29 @@ export async function hasReclaimPriority(driverId, missionId, periodId = null) {
 export async function findReclaimCandidates(missionId, periodId = null) {
   const rows = await all('missed_turns');
   return rows.filter(r =>
-    r.missionId === Number(missionId) &&
-    (!periodId || !r.periodId || r.periodId === String(periodId)) &&
+    Number(r.missionId) === Number(missionId) &&
+    (!periodId || !r.periodId || String(r.periodId) === String(periodId)) &&
     r.returnPolicy === MISSED_POLICY.RECLAIM &&
     !r.resolved
-  );
+  ).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')); // FIFO: oldest missed turn first
 }
 
 export async function resolveMissedForDriver(driverId, missionId, periodId = null) {
   const rows = await all('missed_turns');
-  const target = rows.find(r =>
-    r.driverId === Number(driverId) &&
-    r.missionId === Number(missionId) &&
-    (!periodId || !r.periodId || r.periodId === String(periodId)) &&
+  // Sort oldest first for strict FIFO single-turn resolution
+  const matching = rows.filter(r =>
+    Number(r.driverId) === Number(driverId) &&
+    Number(r.missionId) === Number(missionId) &&
+    (!periodId || !r.periodId || String(r.periodId) === String(periodId)) &&
     !r.resolved
-  );
-  if (target) {
+  ).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+
+  if (matching.length > 0) {
+    const target = matching[0]; // Exactly ONE oldest missed turn (FIFO)
     await resolveMissed({
       missedId: target.id,
       resolution: target.returnPolicy === MISSED_POLICY.RECLAIM ? 'RECLAIMED' : 'RESOLVED_NORMAL',
-      note: 'تم تنفيذ الدور واستعادته بنجاح'
+      note: 'تم تنفيذ الدور واستعادته بنجاح (FIFO)'
     });
     return target;
   }

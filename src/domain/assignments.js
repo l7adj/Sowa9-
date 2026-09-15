@@ -2,7 +2,6 @@ import { get, put, byIdx, all } from '../core/db.js';
 import { nowIso } from '../core/clock.js';
 import { audit } from '../core/audit.js';
 import { requireWrite } from '../core/auth.js';
-import { recordMissed, resolveMissedForDriver } from './missed-turns.js';
 
 export const ASG_STATUS = {
   PROPOSED: 'PROPOSED',
@@ -80,31 +79,6 @@ export async function createAssignment({
     updatedAt: nowIso()
   });
 
-  if (isOverride && dueDriverId) {
-    try {
-      await recordMissed({
-        driverId: Number(dueDriverId),
-        missionId: Number(missionId),
-        periodId: periodId ? String(periodId) : (periodCode ? String(periodCode) : null),
-        dateIso: startIso ? startIso.slice(0, 10) : nowIso().slice(0, 10),
-        reason: replacementReason?.trim() || 'استبدال السائق أو تجاوزه',
-        substitutedBy: Number(plannedDriverId)
-      });
-    } catch (e) {
-      // Ignore if already logged or not critical
-    }
-  }
-
-  if (autoConfirm && plannedDriverId) {
-    try {
-      await resolveMissedForDriver(
-        Number(plannedDriverId),
-        Number(missionId),
-        periodId ? String(periodId) : (periodCode ? String(periodCode) : null)
-      );
-    } catch (e) {}
-  }
-
   await audit({
     entity: 'assignments',
     entityId: id,
@@ -135,28 +109,6 @@ export async function confirm(assignmentId, reason = '') {
   };
   await put('assignments', next);
 
-  if (override && a.dueDriverId) {
-    try {
-      await recordMissed({
-        driverId: Number(a.dueDriverId),
-        missionId: Number(a.missionId),
-        periodId: a.periodId || a.periodCode || null,
-        dateIso: a.startIso ? a.startIso.slice(0, 10) : nowIso().slice(0, 10),
-        reason: reason.trim() || 'استبدال السائق عند التأكيد',
-        substitutedBy: Number(a.plannedDriverId)
-      });
-    } catch (e) {}
-  }
-
-  if (a.plannedDriverId) {
-    try {
-      await resolveMissedForDriver(
-        Number(a.plannedDriverId),
-        Number(a.missionId),
-        a.periodId || a.periodCode || null
-      );
-    } catch (e) {}
-  }
   await audit({
     entity: 'assignments',
     entityId: assignmentId,

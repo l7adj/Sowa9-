@@ -6,8 +6,8 @@ import { requireWrite } from '../core/auth.js';
 export async function getQueue(missionId, periodId = null) {
   const rows = await all('turns');
   return rows.find(r =>
-    r.missionId === missionId &&
-    (r.periodId ?? null) === (periodId ?? null)
+    Number(r.missionId) === Number(missionId) &&
+    String(r.periodId || '') === String(periodId || '')
   ) || null;
 }
 
@@ -44,15 +44,16 @@ export async function ensureQueue(missionId, periodId, allDriverIds) {
 export async function recordExecution({ missionId, periodId = null, driverId, at, assignmentId }) {
   const q = await getQueue(missionId, periodId);
   if (!q) throw new Error('لا توجد قائمة دور');
-  const queue = q.queue.filter(x => x !== driverId);
-  queue.push(driverId);
+  const dId = Number(driverId);
+  const queue = (q.queue || []).map(Number).filter(x => x !== dId);
+  queue.push(dId);
   const lastDone = { ...(q.lastDone || {}) };
-  lastDone[driverId] = at;
+  lastDone[dId] = at;
   const counts = { ...(q.counts || {}) };
-  counts[driverId] = (counts[driverId] || 0) + 1;
+  counts[dId] = (counts[dId] || 0) + 1;
   await put('turns', { ...q, queue, lastDone, counts, updatedAt: nowIso() });
   await audit({ entity:'turns', entityId:q.id, action:'executed',
-    newValue:{ driverId, at, assignmentId } });
+    newValue:{ driverId: dId, at, assignmentId } });
 }
 
 export function dueOf(q) {

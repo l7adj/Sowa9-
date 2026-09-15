@@ -138,3 +138,14 @@ export async function resolveShortage(id, loanId = null) {
   await put('shortages', next);
   return next;
 }
+
+export async function listActiveLoans(dateIso = null) {
+  const filter = { status: LOAN_STATUS.ACTIVE };
+  if (dateIso) filter.dateIso = dateIso;
+  return listLoans(filter);
+}
+
+export async function listUnresolvedShortages(dateIso = null) {
+  const rows = await listShortages(dateIso);
+  return rows.filter(s => !s.resolved);
+}

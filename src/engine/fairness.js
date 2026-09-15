@@ -2,12 +2,15 @@ import { ensureQueue, getTurnInfo, recordExecution } from '../domain/turns.js';
 import { listDrivers, STATUS, STATUS_AR } from '../domain/drivers.js';
 import { listTeams } from '../domain/teams.js';
 import { restBefore, hasConflict } from '../domain/rest.js';
-import { listByOccurrence, ASG_STATUS } from '../domain/assignments.js';
-import { getSetting } from '../core/auth.js';
-import { fmtDurShort, relativeDay } from '../core/clock.js';
+import { listByOccurrence, ASG_STATUS, DRIVER_SOURCE } from '../domain/assignments.js';
+import { getSetting, requireWrite } from '../core/auth.js';
+import { fmtDurShort, relativeDay, nowIso } from '../core/clock.js';
 import { periodRange } from './shared-transport.js';
 import { getMission } from '../domain/missions.js';
-import { findReclaimCandidates } from '../domain/missed-turns.js';
+import { findReclaimCandidates, recordMissed, resolveMissedForDriver, MISSED_POLICY } from '../domain/missed-turns.js';
+import { get, put, byIdx, all } from '../core/db.js';
+import { audit } from '../core/audit.js';
+import { completeLoan } from '../domain/loans.js';
 
 export async function evaluateDriverForShift({
   driver,
@@ -322,8 +325,11 @@ export async function suggestForTurn({
 
   const allEvaluated = [...evaluatedPrimary, ...evaluatedExternal];
 
-  // Check Reclaim Priority:
-  // If an available primary driver had a missed turn with policy === RECLAIM, prioritize them!
+  // Check Reclaim Priority & Due Driver:
+  // Requirement 8: The due driver MUST be established BEFORE filtering for availability.
+  // dueDriver -> Is he available?
+  //   YES -> He is the candidate/proposed.
+  //   NO  -> He remains the dueDriver; search for the substitute/replacement.
   let due = null;
   let isReclaim = false;
 
@@ -333,9 +339,10 @@ export async function suggestForTurn({
   } catch (e) {}
   const reclaimMap = new Map(reclaimCandidates.map(r => [r.driverId, r]));
 
-  const availableReclaim = evaluatedPrimary.find(e => e.isAvailable && reclaimMap.has(e.driver.id));
-  if (availableReclaim) {
-    due = availableReclaim;
+  // 1. Establish due driver: check reclaim priority first, then head of primary queue
+  const reclaimCandidate = evaluatedPrimary.find(e => reclaimMap.has(e.driver.id));
+  if (reclaimCandidate) {
+    due = reclaimCandidate;
     due.isDue = true;
     isReclaim = true;
   } else if (evaluatedPrimary.length > 0) {
@@ -517,6 +524,115 @@ function buildReason(candidate, isDue, due, targetTeam = null) {
   return parts.join(' · ');
 }
 
-export async function commitExecution({ missionId, periodId = null, driverId, at, assignmentId }) {
-  await recordExecution({ missionId, periodId, driverId, at, assignmentId });
+export async function commitExecution({
+  assignmentId,
+  occurrenceId,
+  missionId,
+  periodId = null,
+  driverId,
+  at = nowIso(),
+  reason = ''
+}) {
+  requireWrite('assignment.execute');
+
+  // 1. Validate and retrieve assignment
+  let asg = null;
+  if (assignmentId) {
+    asg = await get('assignments', Number(assignmentId));
+  }
+  if (!asg && occurrenceId) {
+    const list = await byIdx('assignments', 'occurrenceId', Number(occurrenceId));
+    asg = list.find(a =>
+      a.status !== ASG_STATUS.CANCELLED &&
+      (periodId ? (String(a.periodId || '') === String(periodId) || String(a.periodCode || '') === String(periodId)) : true) &&
+      (Number(a.actualDriverId || a.plannedDriverId) === Number(driverId) || !a.actualDriverId)
+    );
+  }
+
+  const effectiveMissionId = Number(missionId || asg?.missionId);
+  const effectivePeriodId = periodId ? String(periodId) : (asg?.periodId || asg?.periodCode || null);
+  const effectiveOccurrenceId = occurrenceId ? Number(occurrenceId) : (asg?.occurrenceId ? Number(asg.occurrenceId) : null);
+  const actualDriverId = Number(driverId);
+  const dueDriverId = asg?.dueDriverId ? Number(asg.dueDriverId) : null;
+  const isBorrowed = (asg?.source === DRIVER_SOURCE.BORROWED) || Boolean(asg?.loanId);
+  const isOverride = Boolean(dueDriverId && dueDriverId !== actualDriverId);
+
+  // 2. Update assignment status and execution details
+  if (asg) {
+    const updatedStatus = isOverride ? ASG_STATUS.OVERRIDDEN : ASG_STATUS.CONFIRMED;
+    const patch = {
+      ...asg,
+      actualDriverId,
+      status: updatedStatus,
+      replacementReason: isOverride ? (asg.replacementReason || reason || 'تنفيذ بواسطة بديل') : null,
+      executedAt: at,
+      updatedAt: nowIso()
+    };
+    if (!patch.confirmedAt) patch.confirmedAt = at;
+    await put('assignments', patch);
+    asg = patch;
+  }
+
+  // 3. Update Turn Queue ONLY if NOT borrowed (Rule 12: borrowed driver does NOT alter permanent queue)
+  if (!isBorrowed && effectiveMissionId) {
+    await recordExecution({
+      missionId: effectiveMissionId,
+      periodId: effectivePeriodId,
+      driverId: actualDriverId,
+      at,
+      assignmentId: asg?.id || null
+    });
+  }
+
+  // 4. Handle Missed Turn for Due Driver if overridden/substitute
+  if (isOverride && dueDriverId && effectiveMissionId) {
+    const mission = await get('missions', effectiveMissionId);
+    const policy = mission?.returnPolicy || MISSED_POLICY.RECLAIM;
+    await recordMissed({
+      driverId: dueDriverId,
+      dueDriverId,
+      plannedDriverId: asg?.plannedDriverId ? Number(asg.plannedDriverId) : actualDriverId,
+      actualDriverId,
+      missionId: effectiveMissionId,
+      periodId: effectivePeriodId,
+      occurrenceId: effectiveOccurrenceId,
+      dateIso: asg?.startIso ? asg.startIso.slice(0, 10) : at.slice(0, 10),
+      reason: asg?.replacementReason || reason || (isBorrowed ? 'استعارة سائق بديل لنقص في الفريق' : 'استبدال السائق في التنفيذ'),
+      substitutedBy: actualDriverId,
+      policy
+    });
+  }
+
+  // 5. Resolve ONE FIFO missed turn for executing driver if they had an outstanding missed turn (Rule 10)
+  if (effectiveMissionId) {
+    try {
+      await resolveMissedForDriver(actualDriverId, effectiveMissionId, effectivePeriodId);
+    } catch (e) {}
+  }
+
+  // 6. Complete Loan if borrowed
+  if (isBorrowed && asg?.loanId) {
+    try {
+      await completeLoan(asg.loanId, `تم التنفيذ بنجاح في ${at}`);
+    } catch (e) {}
+  }
+
+  // 7. Audit
+  await audit({
+    entity: 'assignments',
+    entityId: asg?.id || null,
+    action: 'commit_execution',
+    newValue: {
+      missionId: effectiveMissionId,
+      periodId: effectivePeriodId,
+      occurrenceId: effectiveOccurrenceId,
+      actualDriverId,
+      dueDriverId,
+      isBorrowed,
+      isOverride,
+      executedAt: at
+    }
+  });
+
+  return asg;
 }

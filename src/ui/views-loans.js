@@ -327,7 +327,8 @@ export async function openNewLoanModal(prefill = {}) {
             try {
               const { getOccurrence } = await import('../domain/occurrences.js');
               const { getMission, getMissionPeriods } = await import('../domain/missions.js');
-              const { createProposal, confirm, commitExecution } = await import('../domain/assignments.js');
+              const { createProposal, confirm } = await import('../domain/assignments.js');
+              const { commitExecution } = await import('../engine/fairness.js');
               const { periodRange } = await import('../engine/shared-transport.js');
               const { buildStart, addMin } = await import('../core/clock.js');
 
@@ -347,12 +348,14 @@ export async function openNewLoanModal(prefill = {}) {
                 endIso = addMin(s, occ.durationMinutes).toISOString();
               }
 
+              const dueId = prefill.dueDriverId || (prefill.due?.id) || null;
+
               const aid = await createProposal({
                 occurrenceId: prefill.occurrenceId,
                 missionId,
                 periodId: prefill.periodId || null,
                 periodCode: prefill.periodId || null,
-                dueDriverId: driverId,
+                dueDriverId: dueId,
                 plannedDriverId: driverId,
                 startIso,
                 endIso,

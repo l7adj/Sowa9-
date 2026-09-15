@@ -1,7 +1,10 @@
 import { getSession, setSession, clearSession, ROLE_LABEL, isLeader } from '../core/auth.js';
 import { registerRefresh, registerLogout } from './helpers.js';
-import { renderHome, renderDriversPage, renderSettingsPage } from './views.js';
+import { renderHome } from './views-home.js';
+import { renderCatalogPage } from './views-catalog.js';
 import { renderLoansPage } from './views-loans.js';
+import { renderDriversPage } from './views-drivers.js';
+import { renderSettingsPage } from './views.js';
 
 let rootEl = null;
 let currentTab = 'home';
@@ -9,8 +12,9 @@ let isTransitioning = false;
 let pageCache = {};
 
 const TABS = [
-  { id: 'home', label: 'المهام', icon: '📋', render: renderHome },
-  { id: 'loans', label: 'الإعارات والنقص', icon: '🔄', render: renderLoansPage },
+  { id: 'home', label: 'العمليات', icon: '⚡', render: renderHome },
+  { id: 'catalog', label: 'المهام', icon: '📋', render: renderCatalogPage },
+  { id: 'loans', label: 'الإعارات', icon: '🔄', render: renderLoansPage },
   { id: 'drivers', label: 'السواق', icon: '👥', render: renderDriversPage },
   { id: 'settings', label: 'الإعدادات', icon: '⚙️', render: renderSettingsPage, leaderOnly: true }
 ];

@@ -75,3 +75,7 @@ export async function statusHistory(driverId) {
   return rows.filter(r => r.driverId === driverId)
     .sort((a, b) => a.at.localeCompare(b.at));
 }
+
+export const updateDriver = editDriver;
+export const setDriverStatus = setStatus;
+
