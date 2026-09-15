@@ -7,6 +7,7 @@ import { getSetting } from '../core/auth.js';
 import { fmtDurShort, relativeDay } from '../core/clock.js';
 import { periodRange } from './shared-transport.js';
 import { getMission } from '../domain/missions.js';
+import { findReclaimCandidates } from '../domain/missed-turns.js';
 
 export async function evaluateDriverForShift({
   driver,
@@ -26,7 +27,7 @@ export async function evaluateDriverForShift({
     restOk: true,
     conflict: false,
     alreadyAssigned: false,
-    isSameTeam: targetTeamId ? (driver.teamId === Number(targetTeamId)) : true,
+    isSameTeam: targetTeamId ? (Number(driver.teamId) === Number(targetTeamId)) : true,
     canBorrow: false
   };
 
@@ -35,7 +36,7 @@ export async function evaluateDriverForShift({
     return e;
   }
   if (excludeIds.includes(driver.id)) {
-    e.reasonAr = 'مستبعد';
+    e.reasonAr = 'مستبعد أو معيّن بالفعل';
     return e;
   }
   if (driver.status !== STATUS.AVAILABLE) {
@@ -72,7 +73,15 @@ export async function evaluateDriverForShift({
     e.restMinutes = rest.minutes;
     e.lastEndIso = rest.last.end.toISOString();
     e.restOk = rest.minutes >= restMinMinutes;
-    if (!e.restOk) e.reasonAr = `راحة قصيرة (${fmtDurShort(rest.minutes)})`;
+    if (!e.restOk) {
+      e.reasonAr = `راحة قصيرة (${fmtDurShort(rest.minutes)})`;
+      const enforceRestMin = await getSetting('enforceRestMin');
+      if (enforceRestMin) {
+        e.isAvailable = false;
+        e.reasonAr = `راحة غير كافية (${fmtDurShort(rest.minutes)}) — الإلزام مفعّل`;
+        return e;
+      }
+    }
   }
 
   e.isAvailable = true;
@@ -237,8 +246,18 @@ export async function suggestForTurn({
   const teamMap = new Map(teams.map(t => [t.id, t]));
   const targetTeam = effectiveTargetTeamId ? teamMap.get(Number(effectiveTargetTeamId)) : null;
 
-  const allIds = allDrivers.map(d => d.id);
-  await ensureQueue(missionId, periodId, allIds);
+  // Filter primary drivers: belong to target team, or all drivers if neutral/shared mission
+  const primaryDrivers = effectiveTargetTeamId
+    ? allDrivers.filter(d => Number(d.teamId) === Number(effectiveTargetTeamId))
+    : allDrivers;
+
+  const externalDrivers = effectiveTargetTeamId
+    ? allDrivers.filter(d => Number(d.teamId) !== Number(effectiveTargetTeamId))
+    : [];
+
+  // Turn queue is maintained per mission + period for primary drivers
+  const primaryIds = primaryDrivers.map(d => d.id);
+  await ensureQueue(missionId, periodId, primaryIds);
 
   const info = await getTurnInfo(missionId, periodId);
   if (!info) {
@@ -249,8 +268,10 @@ export async function suggestForTurn({
     };
   }
 
-  const evaluated = [];
+  // Evaluate primary queue drivers
+  const evaluatedPrimary = [];
   for (const item of info.queue) {
+    if (excludeIds.includes(item.driver.id)) continue;
     const check = await evaluateDriverForShift({
       driver: item.driver,
       startDate,
@@ -262,22 +283,70 @@ export async function suggestForTurn({
       excludeIds
     });
     const driverTeam = teamMap.get(item.driver.teamId) || { name: 'الفريق الرئيسي', id: item.driver.teamId || 1 };
-    evaluated.push({
+    evaluatedPrimary.push({
       ...check,
       driver: item.driver,
       team: driverTeam,
       position: item.position,
-      isDue: item.isDue,
+      isDue: false,
       count: item.count,
       lastDone: item.lastDone
     });
   }
 
-  const due = evaluated[0];
-  const sameTeamAvailable = evaluated.filter(e => e.isAvailable && e.isSameTeam);
-  const otherTeamsAvailable = evaluated.filter(e => e.isAvailable && !e.isSameTeam);
-  const available = evaluated.filter(e => e.isAvailable);
-  const blocked = evaluated.filter(e => !e.isAvailable);
+  // Also evaluate external drivers for borrowing if needed
+  const evaluatedExternal = [];
+  for (const drv of externalDrivers) {
+    if (excludeIds.includes(drv.id)) continue;
+    const check = await evaluateDriverForShift({
+      driver: drv,
+      startDate,
+      endDate,
+      restMinMinutes,
+      occurrenceId,
+      periodId,
+      targetTeamId: effectiveTargetTeamId,
+      excludeIds
+    });
+    const driverTeam = teamMap.get(drv.teamId) || { name: 'فريق خارجي', id: drv.teamId };
+    evaluatedExternal.push({
+      ...check,
+      driver: drv,
+      team: driverTeam,
+      position: -1,
+      isDue: false,
+      count: 0,
+      lastDone: null
+    });
+  }
+
+  const allEvaluated = [...evaluatedPrimary, ...evaluatedExternal];
+
+  // Check Reclaim Priority:
+  // If an available primary driver had a missed turn with policy === RECLAIM, prioritize them!
+  let due = null;
+  let isReclaim = false;
+
+  let reclaimCandidates = [];
+  try {
+    reclaimCandidates = await findReclaimCandidates(missionId, periodId);
+  } catch (e) {}
+  const reclaimMap = new Map(reclaimCandidates.map(r => [r.driverId, r]));
+
+  const availableReclaim = evaluatedPrimary.find(e => e.isAvailable && reclaimMap.has(e.driver.id));
+  if (availableReclaim) {
+    due = availableReclaim;
+    due.isDue = true;
+    isReclaim = true;
+  } else if (evaluatedPrimary.length > 0) {
+    due = evaluatedPrimary[0];
+    due.isDue = true;
+  }
+
+  const sameTeamAvailable = evaluatedPrimary.filter(e => e.isAvailable);
+  const otherTeamsAvailable = evaluatedExternal.filter(e => e.isAvailable);
+  const available = [...sameTeamAvailable, ...otherTeamsAvailable];
+  const blocked = allEvaluated.filter(e => !e.isAvailable);
 
   // Sorting helper by rest sufficiency and rest duration
   const sortCandidates = (list) => {
@@ -292,16 +361,20 @@ export async function suggestForTurn({
   const internalShortage = Boolean(effectiveTargetTeamId && sameTeamAvailable.length === 0);
   const netShortage = available.length === 0 ? 1 : 0;
 
-  // Case 1: The designated due driver is available and belongs to the target team (or mission has no team restriction)
+  // Case 1: The designated due driver is available and belongs to target team (or is neutral)
   if (due && due.isAvailable && (!effectiveTargetTeamId || due.isSameTeam)) {
+    const reasonText = isReclaim
+      ? `استعادة الدور الفائت (Reclaim Priority) لـ ${due.driver.name} بعد العودة والتوفر`
+      : buildReason(due, true);
+
     return {
       due: due.driver,
       proposed: due.driver,
       candidate: due,
       isBorrow: false,
       borrowFromTeam: null,
-      reason: buildReason(due, true),
-      queue: evaluated,
+      reason: reasonText,
+      queue: allEvaluated,
       available,
       sameTeamAvailable,
       otherTeamsAvailable,
@@ -313,7 +386,7 @@ export async function suggestForTurn({
     };
   }
 
-  // Case 2: Due driver is not available (or is external), but target team has other available drivers
+  // Case 2: Due driver is not available, but target team has other available drivers
   if (sameTeamAvailable.length > 0) {
     const internalCandidate = sameTeamAvailable[0];
     return {
@@ -323,7 +396,7 @@ export async function suggestForTurn({
       isBorrow: false,
       borrowFromTeam: null,
       reason: buildReason(internalCandidate, false, due, targetTeam),
-      queue: evaluated,
+      queue: allEvaluated,
       available,
       sameTeamAvailable,
       otherTeamsAvailable,
@@ -350,7 +423,7 @@ export async function suggestForTurn({
       borrowFromTeam: borrowCandidate.team,
       needsLoan: true,
       reason: reasonText,
-      queue: evaluated,
+      queue: allEvaluated,
       available,
       sameTeamAvailable,
       otherTeamsAvailable,
@@ -375,7 +448,7 @@ export async function suggestForTurn({
     isBorrow: false,
     borrowFromTeam: null,
     reason: emptyReason,
-    queue: evaluated,
+    queue: allEvaluated,
     available: [],
     sameTeamAvailable: [],
     otherTeamsAvailable: [],
@@ -385,6 +458,38 @@ export async function suggestForTurn({
     missed: due ? { driverId: due.driver.id, reason: due.reasonAr } : null,
     warning: null
   };
+}
+
+export async function suggestMultipleForPeriod({
+  missionId,
+  period,
+  occurrenceId = null,
+  dateIso,
+  count = 1,
+  targetTeamId = null,
+  alreadyAssignedIds = []
+}) {
+  const pCode = period.code || period.id;
+  const range = periodRange(period, dateIso);
+  const results = [];
+  const excluded = [...alreadyAssignedIds];
+
+  for (let i = 0; i < count; i++) {
+    const res = await suggestForTurn({
+      missionId,
+      periodId: pCode,
+      occurrenceId,
+      startIso: range.start.toISOString(),
+      endIso: range.end.toISOString(),
+      targetTeamId,
+      excludeIds: excluded
+    });
+    results.push(res);
+    if (res.proposed) {
+      excluded.push(res.proposed.id);
+    }
+  }
+  return results;
 }
 
 function buildReason(candidate, isDue, due, targetTeam = null) {

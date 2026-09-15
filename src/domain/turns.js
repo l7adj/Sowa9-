@@ -28,8 +28,16 @@ export async function initQueue({ missionId, periodId = null, initialOrder, reas
 
 export async function ensureQueue(missionId, periodId, allDriverIds) {
   const q = await getQueue(missionId, periodId);
-  if (q) return q;
-  return initQueue({ missionId, periodId, initialOrder: allDriverIds,
+  if (q) {
+    const missing = (allDriverIds || []).filter(id => !q.queue.includes(id));
+    if (missing.length > 0) {
+      const updatedQueue = [...q.queue, ...missing];
+      await put('turns', { ...q, queue: updatedQueue, updatedAt: nowIso() });
+      q.queue = updatedQueue;
+    }
+    return q;
+  }
+  return initQueue({ missionId, periodId, initialOrder: allDriverIds || [],
     reason: 'بناء تلقائي' });
 }
 

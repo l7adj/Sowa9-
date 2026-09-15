@@ -749,19 +749,24 @@ async function openDriverPicker(occId) {
   });
 }
 
-async function assignDriverToMission(occId, missionId, driverId, dueDriverId = null) {
+async function assignDriverToMission(occId, missionId, driverId, dueDriverId = null, extraOpts = {}) {
   const o = await getOccurrence(occId);
   const start = buildStart(o.dateIso, o.startTime);
   const end = addMin(start, o.durationMinutes);
   const due = dueDriverId ?? driverId;
+  const isOverride = due && driverId && Number(due) !== Number(driverId);
+  const repReason = extraOpts.replacementReason || (isOverride ? 'اختيار القائد لتجاوز صاحب الدور' : '');
   const aid = await createProposal({
     occurrenceId: occId, missionId, periodId: null,
     dueDriverId: due,
     plannedDriverId: driverId,
     startIso: start.toISOString(), endIso: end.toISOString(),
-    rationale: 'تعيين يدوي من القائد', score: 0
+    rationale: 'تعيين يدوي من القائد', score: 0,
+    source: extraOpts.source || 'TEAM',
+    loanId: extraOpts.loanId || null,
+    replacementReason: repReason,
+    autoConfirm: true
   });
-  await confirmProposal(aid, driverId !== due ? 'اختيار القائد لتجاوز صاحب الدور' : '');
   await commitExecution({
     missionId, periodId: null, driverId,
     at: start.toISOString(), assignmentId: aid
@@ -1262,6 +1267,8 @@ async function assignDriverToPeriod(occId, missionId, period, driverId, dueDrive
     (x.periodCode === pCode || x.periodId === pCode) && x.status !== ASG_STATUS.CANCELLED);
   if (prev) await cancel(prev.id, 'استبدال السائق');
   const due = dueDriverId ?? driverId;
+  const isOverride = due && driverId && Number(due) !== Number(driverId);
+  const repReason = extraOpts.replacementReason || (isOverride ? 'اختيار القائد لتجاوز صاحب الدور' : '');
   const aid = await createProposal({
     occurrenceId: occId, missionId,
     periodId: pCode, periodCode: pCode,
@@ -1270,9 +1277,10 @@ async function assignDriverToPeriod(occId, missionId, period, driverId, dueDrive
     startIso: r.start.toISOString(), endIso: r.end.toISOString(),
     rationale: `تعيين فترة ${period.name || pCode}`, score: 0,
     source: extraOpts.source || 'TEAM',
-    loanId: extraOpts.loanId || null
+    loanId: extraOpts.loanId || null,
+    replacementReason: repReason,
+    autoConfirm: true
   });
-  await confirmProposal(aid, driverId !== due ? 'اختيار القائد لتجاوز صاحب الدور' : '');
   await commitExecution({
     missionId, periodId: pCode, driverId,
     at: r.start.toISOString(), assignmentId: aid
