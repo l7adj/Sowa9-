@@ -4,7 +4,7 @@ import { listTeams } from '../domain/teams.js';
 import { restBefore, hasConflict } from '../domain/rest.js';
 import { listByOccurrence, ASG_STATUS, DRIVER_SOURCE } from '../domain/assignments.js';
 import { getSetting, requireWrite } from '../core/auth.js';
-import { fmtDurShort, relativeDay, nowIso } from '../core/clock.js';
+import { fmtDurShort, relativeDay, nowIso, formatDateIso } from '../core/clock.js';
 import { periodRange } from './shared-transport.js';
 import { getMission } from '../domain/missions.js';
 import { findReclaimCandidates, recordMissed, resolveMissedForDriver, MISSED_POLICY } from '../domain/missed-turns.js';
@@ -628,7 +628,7 @@ export async function commitExecution({
       missionId: effectiveMissionId,
       periodId: effectivePeriodId,
       occurrenceId: effectiveOccurrenceId,
-      dateIso: asg?.startIso ? asg.startIso.slice(0, 10) : at.slice(0, 10),
+      dateIso: formatDateIso(asg?.startIso) || (typeof at === 'string' ? at.slice(0, 10) : formatDateIso(at)),
       reason: asg?.replacementReason || reason || (isBorrowed ? 'استعارة سائق بديل لنقص في الفريق' : 'استبدال السائق في التنفيذ'),
       substitutedBy: actualDriverId,
       policy

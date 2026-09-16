@@ -1,6 +1,6 @@
 import { listByDate, createOccurrence, getOccurrence, updateOccurrence } from '../domain/occurrences.js';
-import { listMissions, getMission, getMissionPeriods } from '../domain/missions.js';
-import { listDrivers, STATUS, STATUS_AR, STATUS_COLOR, DRIVER_CATEGORY, DRIVER_CATEGORY_AR } from '../domain/drivers.js';
+import { listMissions, getMission, getMissionPeriods, createMission } from '../domain/missions.js';
+import { listDrivers, setDriverStatus, STATUS, STATUS_AR, STATUS_COLOR, DRIVER_CATEGORY, DRIVER_CATEGORY_AR } from '../domain/drivers.js';
 import { listTeams } from '../domain/teams.js';
 import {
   listByOccurrence, createProposal, confirm as confirmProposal,
@@ -11,18 +11,21 @@ import { listLoans, listActiveLoans, listUnresolvedShortages, recordShortage } f
 import { isDatabaseEmpty, seedDemoDataset } from '../domain/demo.js';
 import { periodRange } from '../engine/shared-transport.js';
 import { isManager, isLeader, requireWrite, getSession } from '../core/auth.js';
-import { sheet, toast, refresh, attachRipple, esc } from './helpers.js';
+import { toast, refresh, attachRipple, esc, sheet } from './helpers.js';
+import { openDriverPickerSheet, openDriverProfileSheet } from './components/driver-modal.js';
+import { openAddTodayMissionSheet } from './components/add-mission-modal.js';
 import {
   todayIso, addDays, humanDate, humanDateFull, dayNameAr, isToday,
-  fmtDurShort, toMin, fromMinSafe, buildStart, addMin, nowIso, calcDuration
+  fmtDurShort, toMin, fromMinSafe, buildStart, addMin, nowIso, calcDuration,
+  formatTimeHhmm, formatDateIso
 } from '../core/clock.js';
-import { openNewLoanModal } from './views-loans.js';
-import { openCreateOccurrenceModal } from './views-catalog.js';
 
 let currentDate = todayIso();
-// Modes: 'LIGHT' (الوزن الخفيف) | 'SHARED' (النقل المشترك) | 'DRIVERS_ROSTER' (جدول مهام السواق) | 'ALL' (عرض الكل)
-let activeOpsFilter = 'LIGHT';
+// Modes: 'ALL' (جميع المهام) | 'LIGHT' (الوزن الخفيف) | 'SHARED' (النقل المشترك) | 'DRIVERS_ROSTER' (جدول مهام السواق)
+let activeOpsFilter = 'ALL';
 let driverSearchQuery = '';
+let missionSearchQuery = '';
+let quickMissionOpen = false;
 
 export function getCurrentDate() {
   return currentDate;
@@ -37,34 +40,28 @@ export async function renderHome(main) {
   const sess = getSession();
   const isDriverRole = sess?.role === 'DRIVER';
 
-  // If driver role, default directly to Driver Schedule if not set
   if (isDriverRole && activeOpsFilter !== 'DRIVERS_ROSTER') {
     activeOpsFilter = 'DRIVERS_ROSTER';
   }
 
   const isEmpty = await isDatabaseEmpty();
-
-  // If database is empty, present demo onboarding prompt
   if (isEmpty) {
     main.innerHTML = `
-      <div class="empty-block" style="padding:40px 20px;text-align:center;background:var(--surface-card);border:1px solid var(--line);border-radius:16px;margin:20px 0">
-        <div style="font-size:48px;margin-bottom:12px">🚀</div>
-        <h2 style="font-size:20px;font-weight:900;color:var(--text);margin-bottom:8px">مرحباً بك في Sowa9</h2>
-        <p style="font-size:14px;color:var(--text-2);max-width:480px;margin:0 auto 20px;line-height:1.6">
-          نظام تشغيل وإدارة مهام السواق التام. قاعدة البيانات جاهزة ونظيفة. يمكنك تفعيل بيانات تشغيلية تجريبية كاملة بنقرة واحدة لاختبار دورة العمل فوراً:
+      <div class="empty-block" style="padding:48px 24px;text-align:center;background:var(--surface-card);border:1px solid var(--line);border-radius:18px;margin:30px auto;max-width:560px;box-shadow:var(--shadow-2)">
+        <div style="font-size:52px;margin-bottom:14px">🚀</div>
+        <h2 style="font-size:22px;font-weight:900;color:var(--text);margin-bottom:8px">مرحباً بك في Sowa9</h2>
+        <p style="font-size:14px;color:var(--text-2);line-height:1.7;margin:0 0 24px">
+          نظام قيادة وتشغيل فرقة السواق. يمكنك تفعيل البيانات التجريبية الشاملة بضغطة زر واحدة لتجربة توزيع المهام وحساب الأدوار فوراً:
         </p>
-        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-          <button class="btn-primary" id="btnSeedDemo" style="padding:12px 24px;font-size:14px;font-weight:800">
-            ⚡ تفعيل البيانات التجريبية الشاملة (Demo)
-          </button>
-        </div>
+        <button class="btn-primary" id="btnSeedDemo" style="padding:14px 28px;font-size:15px;font-weight:800;border-radius:12px;background:linear-gradient(135deg,#1d4ed8,#2563eb);box-shadow:0 4px 14px rgba(37,99,235,0.3)">
+          ⚡ تفعيل البيانات التشغيلية (Demo)
+        </button>
       </div>
     `;
-
     main.querySelector('#btnSeedDemo')?.addEventListener('click', async () => {
       try {
         await seedDemoDataset();
-        toast('تم تفعيل البيانات التجريبية الشاملة بنجاح!', 2500, 'success');
+        toast('تم تفعيل البيانات التشغيلية بنجاح!', 2500, 'success');
         refresh();
       } catch (e) {
         toast(e.message, 2500, 'error');
@@ -74,20 +71,18 @@ export async function renderHome(main) {
   }
 
   // Load Operations Data
-  const [occurrences, missions, drivers, teams, activeLoans, unresolvedShortages] = await Promise.all([
+  const [occurrences, missions, drivers, teams] = await Promise.all([
     listByDate(currentDate),
     listMissions(true),
     listDrivers(),
-    listTeams(),
-    listActiveLoans(),
-    listUnresolvedShortages()
+    listTeams()
   ]);
 
   const missionMap = new Map(missions.map(m => [m.id, m]));
   const driverMap = new Map(drivers.map(d => [d.id, d]));
   const teamMap = new Map(teams.map(t => [t.id, t]));
 
-  // Retrieve all assignments for today's occurrences
+  // Retrieve assignments for today's occurrences
   const allAssignments = [];
   for (const occ of occurrences) {
     const asgs = await listByOccurrence(occ.id);
@@ -96,11 +91,11 @@ export async function renderHome(main) {
     }
   }
 
-  // Split drivers strictly by category: NO cross-comparison!
+  // Separate drivers strictly by category
   const lightDrivers = drivers.filter(d => (d.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.LIGHT);
   const sharedDrivers = drivers.filter(d => d.category === DRIVER_CATEGORY.SHARED);
 
-  // Deconstruct occurrences into all operational periods for selected date
+  // Deconstruct occurrences into operational periods
   const operationalPeriods = [];
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -160,19 +155,18 @@ export async function renderHome(main) {
 
   operationalPeriods.sort((a, b) => a.startMin - b.startMin);
 
-  // Filter periods strictly according to squad selection
+  // Filter periods strictly by squad selection
   const lightPeriods = operationalPeriods.filter(op => op.category === DRIVER_CATEGORY.LIGHT);
   const sharedPeriods = operationalPeriods.filter(op => op.category === DRIVER_CATEGORY.SHARED);
 
-  let displayedPeriods = operationalPeriods;
-  if (activeOpsFilter === 'LIGHT') {
-    displayedPeriods = lightPeriods;
-  } else if (activeOpsFilter === 'SHARED') {
-    displayedPeriods = sharedPeriods;
-  }
+  let displayedPeriods = activeOpsFilter === 'SHARED' ? sharedPeriods : activeOpsFilter === 'LIGHT' ? lightPeriods : operationalPeriods;
 
-  const activeNowPeriods = displayedPeriods.filter(p => p.isActiveNow);
-  const upcomingPeriods = displayedPeriods.filter(p => !p.isActiveNow && p.isUpcomingToday);
+  if (missionSearchQuery) {
+    displayedPeriods = displayedPeriods.filter(p =>
+      p.mission.name.toLowerCase().includes(missionSearchQuery) ||
+      (p.period.name && p.period.name.toLowerCase().includes(missionSearchQuery))
+    );
+  }
 
   // Active drivers currently driving
   const drivingDriverIds = new Set();
@@ -183,83 +177,65 @@ export async function renderHome(main) {
     });
   });
 
-  // Category specific active drivers
-  const squadDrivers = activeOpsFilter === 'SHARED' ? sharedDrivers : activeOpsFilter === 'LIGHT' ? lightDrivers : drivers;
-  const squadAvailable = squadDrivers.filter(d => d.status === STATUS.AVAILABLE && !drivingDriverIds.has(d.id));
-  const squadUnavailable = squadDrivers.filter(d => d.status !== STATUS.AVAILABLE);
-  const squadDrivingNow = squadDrivers.filter(d => drivingDriverIds.has(d.id));
+  const activeDrivingDrivers = drivers.filter(d => drivingDriverIds.has(d.id));
+  const availableDrivers = drivers.filter(d => d.status === STATUS.AVAILABLE && !drivingDriverIds.has(d.id));
+  const unavailableDrivers = drivers.filter(d => d.status !== STATUS.AVAILABLE);
 
-  // Quick navigation dates
+  // Suggested by fair turn: available drivers sorted with least active duty
+  const suggestedLight = availableDrivers.filter(d => d.category !== DRIVER_CATEGORY.SHARED);
+  const suggestedShared = availableDrivers.filter(d => d.category === DRIVER_CATEGORY.SHARED);
+
+  // Dates for quick 1-click navigation
   const yesterday = addDays(currentDate, -1);
   const tomorrow = addDays(currentDate, 1);
+  const dayAfterTomorrow = addDays(currentDate, 2);
 
   main.innerHTML = `
-    <!-- 1. PROMINENT OPERATIONAL DATE COMMAND BANNER -->
-    <div class="card" style="padding:16px 20px;margin-bottom:14px;border:1px solid var(--line);background:var(--surface-card)">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+    <!-- 1. HEADER (بخط كبير واضح ومريح للعين) -->
+    <div class="today-banner-card" style="background:var(--surface-card);border:1px solid var(--line);border-radius:16px;padding:20px 24px;margin-bottom:20px;box-shadow:var(--shadow-1)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
         <div>
-          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-            <span style="font-size:24px;font-weight:900;color:var(--text)">${dayNameAr(currentDate)}</span>
-            <span style="font-size:18px;font-weight:800;color:var(--text-2)">${humanDate(currentDate)}</span>
-            <span style="font-size:13px;color:var(--text-3);font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:6px">${currentDate}</span>
+          <div style="font-size:12px;font-weight:800;color:var(--color-accent);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+            <span>📅</span>
+            <span>جدول مهام الميدان والتشغيل اليومي</span>
+            ${isToday(currentDate) ? '<span class="today-badge">اليوم</span>' : ''}
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:4px">
-            لوحة قيادة فرقة السواق · ${isToday(currentDate) ? '⚡ العمليات الميدانية لليوم الحالي' : '📅 جدول تشغيل يوم ' + dayNameAr(currentDate)}
-          </div>
+          <!-- بخط كبير وواضح ومريح للعين -->
+          <h1 style="margin:0;font-size:26px;font-weight:900;color:var(--text);letter-spacing:-0.5px">
+            اليوم: ${dayNameAr(currentDate)} ${humanDate(currentDate)}
+          </h1>
         </div>
 
-        <!-- Date Controls: Clear Day Switching & Direct Calendar Picker -->
+        <!-- 1-Click Fast Day Navigator & Actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <button class="nav" id="btnPrevDay" title="اليوم السابق" style="padding:8px 14px;font-weight:800;font-size:13px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);cursor:pointer">
-            ‹ اليوم السابق
-          </button>
-          <button type="button" class="filter-pill ${isToday(currentDate) ? 'active' : ''}" id="btnNavToday" style="padding:8px 14px;font-size:13px">
-            اليوم
-          </button>
-          <button type="button" class="filter-pill ${currentDate === tomorrow ? 'active' : ''}" id="btnNavTomorrow" style="padding:8px 14px;font-size:13px">
-            غداً
-          </button>
-          <button class="nav" id="btnNextDay" title="اليوم التالي" style="padding:8px 14px;font-weight:800;font-size:13px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);cursor:pointer">
-            اليوم التالي ›
-          </button>
-
-          <!-- Direct Date Picker (No Prompts, Instant Change) -->
-          <div style="display:flex;align-items:center;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:2px 8px" title="اختر أي تاريخ بالتقويم">
-            <span style="font-size:14px;margin-left:4px">📅</span>
-            <input type="date" id="directDateInput" value="${currentDate}" style="border:0;background:transparent;font-weight:700;font-size:13px;color:var(--text);cursor:pointer;outline:none;font-family:inherit">
+          <div class="exec-day-chips">
+            <button type="button" class="day-chip-btn nav-arrow" id="btnPrevDay" title="اليوم السابق">‹</button>
+            <button type="button" class="day-chip-btn ${currentDate === yesterday ? 'active' : ''}" id="btnNavYesterday">أمس</button>
+            <button type="button" class="day-chip-btn ${isToday(currentDate) ? 'active' : ''}" id="btnNavToday">اليوم</button>
+            <button type="button" class="day-chip-btn ${currentDate === tomorrow ? 'active' : ''}" id="btnNavTomorrow">غداً</button>
+            <button type="button" class="day-chip-btn ${currentDate === dayAfterTomorrow ? 'active' : ''}" id="btnNavDayAfter">بعد غد</button>
+            <button type="button" class="day-chip-btn nav-arrow" id="btnNextDay" title="اليوم التالي">›</button>
           </div>
+
+          <div class="exec-date-picker-wrap" title="اختر تاريخاً بالتقويم">
+            <input type="date" id="directDateInput" value="${currentDate}">
+          </div>
+
+          ${isMgr ? `
+            <button type="button" class="btn-primary" id="btnOpenAddTodayMission" style="width:auto;padding:8px 16px;font-size:12px;font-weight:800;border-radius:10px;background:var(--color-accent);color:#fff;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+              <span>➕</span>
+              <span>إضافة مهمة لليوم</span>
+            </button>
+          ` : ''}
+
+          <button type="button" class="btn-ghost" id="btnToggleDriverRoster" style="padding:8px 14px;font-size:12px;font-weight:800;border-radius:10px;background:var(--surface-2);border:1px solid var(--line);color:var(--text);cursor:pointer">
+            ${activeOpsFilter === 'DRIVERS_ROSTER' ? '📋 العودة لمهام اليوم' : '👤 جدول مهام السواق'}
+          </button>
         </div>
       </div>
     </div>
 
-    ${isMgr ? '' : '<div class="readonly-banner">📖 وضع العرض — مهام وجداول السواق الميدانية</div>'}
-
-    <!-- 2. SQUAD COMMAND TABS (STRICT SEPARATION: LIGHT vs SHARED vs DRIVER ROSTER) -->
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button type="button" class="filter-pill ${activeOpsFilter === 'LIGHT' ? 'active' : ''}" data-ops-filter="LIGHT" style="padding:10px 18px;font-size:13px;font-weight:800">
-          🚗 فرقة سواق الوزن الخفيف (${lightPeriods.length} مهمة)
-        </button>
-        <button type="button" class="filter-pill ${activeOpsFilter === 'SHARED' ? 'active' : ''}" data-ops-filter="SHARED" style="padding:10px 18px;font-size:13px;font-weight:800">
-          🚌 فرقة سواق النقل المشترك (${sharedPeriods.length} مهمة)
-        </button>
-        <button type="button" class="filter-pill ${activeOpsFilter === 'DRIVERS_ROSTER' ? 'active' : ''}" data-ops-filter="DRIVERS_ROSTER" style="padding:10px 18px;font-size:13px;font-weight:800;background:${activeOpsFilter === 'DRIVERS_ROSTER' ? 'var(--color-primary)' : 'var(--surface-card)'}">
-          👤 جدول مهام السواق (الميداني)
-        </button>
-        <button type="button" class="filter-pill ${activeOpsFilter === 'ALL' ? 'active' : ''}" data-ops-filter="ALL" style="padding:10px 14px;font-size:12px">
-          📋 عرض الكل (${operationalPeriods.length})
-        </button>
-      </div>
-
-      ${isMgr ? `
-        <button class="btn-primary" id="btnQuickCreateOcc" style="padding:8px 16px;font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px">
-          <span>🚀</span>
-          <span>استوديو تشغيل مهمة</span>
-        </button>
-      ` : ''}
-    </div>
-
-    <!-- MAIN BODY BASED ON ACTIVE MODE -->
+    <!-- MAIN CONTENT -->
     ${activeOpsFilter === 'DRIVERS_ROSTER' ? renderDriverRosterView({
       drivers,
       lightDrivers,
@@ -270,148 +246,236 @@ export async function renderHome(main) {
       currentDate,
       isMgr
     }) : `
-      <!-- Squad Pulse Metrics -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(135px, 1fr));gap:8px;margin-bottom:14px">
-        <div style="background:var(--surface-card);border:1px solid ${activeNowPeriods.length > 0 ? 'var(--danger,#ef4444)' : 'var(--line)'};border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:24px">🔴</span>
-          <div>
-            <div style="font-size:11px;color:var(--text-3);font-weight:700">جارية بالميدان الآن</div>
-            <div style="font-size:20px;font-weight:900;color:${activeNowPeriods.length > 0 ? 'var(--danger,#ef4444)' : 'var(--text)'}">
-              ${activeNowPeriods.length}
-            </div>
+      <!-- 2. SECTION: مهام اليوم -->
+      <div class="today-missions-section" style="margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:22px">📋</span>
+            <h2 style="margin:0;font-size:19px;font-weight:900;color:var(--text)">
+              مهام اليوم:
+            </h2>
+            <span style="font-size:12px;font-weight:800;background:var(--surface-2);color:var(--text-2);padding:2px 10px;border-radius:14px;border:1px solid var(--line)">
+              ${displayedPeriods.length} مهمة مسجلة
+            </span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="text" id="missionSearchInput" class="input" placeholder="🔍 بحث في مهام اليوم..." value="${esc(missionSearchQuery)}" style="padding:6px 12px;font-size:12px;border-radius:8px;background:var(--surface-card);border:1px solid var(--line);width:180px">
+            ${isMgr ? `
+              <button type="button" class="btn-ghost" id="btnToggleQuickMission" style="padding:6px 12px;font-size:12px;font-weight:700;border-radius:8px;background:var(--surface-card);border:1px solid var(--line);color:var(--text-2);cursor:pointer">
+                ${quickMissionOpen ? '✕ إغلاق' : '⚡ إدخال سريع'}
+              </button>
+            ` : ''}
           </div>
         </div>
 
-        <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:24px">⏳</span>
-          <div>
-            <div style="font-size:11px;color:var(--text-3);font-weight:700">قادمة اليوم</div>
-            <div style="font-size:20px;font-weight:900;color:var(--text)">
-              ${upcomingPeriods.length}
+        <!-- COLLAPSIBLE INLINE QUICK MISSION FORM -->
+        <div id="quickMissionCard" style="display:${quickMissionOpen ? 'block' : 'none'};background:var(--surface-card);border:1px solid var(--color-accent);border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-2)">
+          <div style="font-size:14px;font-weight:900;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+            <span>⚡</span>
+            <span>إضافة مهمة سريعة لجدول اليوم</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;margin-bottom:12px">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--text-2);display:block;margin-bottom:3px">اسم المهمة</label>
+              <input type="text" id="quickMisName" placeholder="مثال: مهمة تأمين الغابة" class="input" style="width:100%;font-size:12px;padding:7px 10px">
             </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--text-2);display:block;margin-bottom:3px">وقت البداية</label>
+              <input type="time" id="quickMisStart" value="08:00" class="input" style="width:100%;font-size:12px;padding:7px 10px">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--text-2);display:block;margin-bottom:3px">وقت النهاية</label>
+              <input type="time" id="quickMisEnd" value="16:00" class="input" style="width:100%;font-size:12px;padding:7px 10px">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--text-2);display:block;margin-bottom:3px">عدد السواق المطلوبين</label>
+              <input type="number" id="quickMisDrivers" value="1" min="1" max="10" class="input" style="width:100%;font-size:12px;padding:7px 10px">
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button type="button" class="btn-ghost" id="btnCancelQuickMis" style="width:auto;padding:7px 14px;font-size:12px">إلغاء</button>
+            <button type="button" class="btn-primary" id="btnSaveQuickMis" style="width:auto;padding:7px 18px;font-size:12px;font-weight:800;background:var(--color-accent);color:#fff">
+              💾 حفظ وتكليف فوراً
+            </button>
           </div>
         </div>
 
-        <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:24px">👥</span>
-          <div>
-            <div style="font-size:11px;color:var(--text-3);font-weight:700">يقودون حالياً</div>
-            <div style="font-size:20px;font-weight:900;color:var(--ok,#10b981)">
-              ${squadDrivingNow.length}
+        <!-- LIST OF TODAY'S MISSIONS (WITH PARALLEL DRIVER COLUMNS) -->
+        <div style="display:flex;flex-direction:column;gap:16px">
+          ${displayedPeriods.length === 0 ? `
+            <div style="text-align:center;padding:40px 20px;background:var(--surface-card);border:1px dashed var(--line);border-radius:14px;color:var(--text-3)">
+              <div style="font-size:36px;margin-bottom:8px">📋</div>
+              <div style="font-size:15px;font-weight:800;color:var(--text)">لا توجد مهام مسجلة في هذا اليوم</div>
+              <div style="font-size:12px;margin-top:4px">يمكنك إضافة مهام اليوم مباشرة عبر زر "➕ إضافة مهمة لليوم" أعلاه</div>
             </div>
-          </div>
-        </div>
-
-        <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:24px">⚪</span>
-          <div>
-            <div style="font-size:11px;color:var(--text-3);font-weight:700">سواق جاهزون</div>
-            <div style="font-size:20px;font-weight:900;color:var(--text)">
-              ${squadAvailable.length}
-            </div>
-          </div>
+          ` : displayedPeriods.map(op => renderOperationalPeriodCard(op, driverMap, teamMap, drivers, isMgr)).join('')}
         </div>
       </div>
 
-      <!-- ACTIVE NOW MISSIONS -->
-      <div class="section" style="margin-bottom:16px">
-        <div class="section-head" style="background:var(--surface-2);border-radius:12px 12px 0 0;padding:12px 14px">
-          <div class="title" style="color:var(--danger,#ef4444);display:flex;align-items:center;gap:8px">
-            <span style="font-size:16px">🔴</span>
-            <span style="font-weight:800;font-size:14px">المهام الجارية الآن بالميدان</span>
-            <span class="count accent">${activeNowPeriods.length}</span>
+      <!-- 3. SECTION: ثم في الأسفل: السواق المقترحين أو إحصائيات السواق -->
+      <div class="bottom-stats-suggestions" style="background:var(--surface-card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow-1)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:22px">📊</span>
+            <div>
+              <h3 style="margin:0;font-size:17px;font-weight:900;color:var(--text)">
+                إحصائيات السواق والسواق المقترحون بالدور
+              </h3>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">
+                كشف جاهزية السواق الميدانية وتوزيع التكليفات بعدالة
+              </div>
+            </div>
           </div>
         </div>
-        <div class="section-body" style="padding:12px">
-          ${activeNowPeriods.length === 0 ? `
-            <div style="text-align:center;padding:22px;color:var(--text-3);font-size:13px;background:var(--surface-card);border:1px dashed var(--line);border-radius:10px">
-              لا توجد مهام جارية في هذه اللحظة لهذه الفرقة
-            </div>
-          ` : activeNowPeriods.map(op => renderOperationalPeriodCard(op, driverMap, teamMap, isMgr, true)).join('')}
-        </div>
-      </div>
 
-      <!-- UPCOMING TODAY MISSIONS -->
-      <div class="section" style="margin-bottom:16px">
-        <div class="section-head" style="background:var(--surface-2);border-radius:12px 12px 0 0;padding:12px 14px">
-          <div class="title" style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:16px">⏳</span>
-            <span style="font-weight:800;font-size:14px">المهام القادمة (جدول اليوم)</span>
-            <span class="count">${upcomingPeriods.length}</span>
+        <!-- 4 Stats Cards (Clean & High Contrast) -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;margin-bottom:18px">
+          <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px">
+            <div style="font-size:11px;color:var(--text-3);font-weight:700">👥 إجمالي السواق</div>
+            <div style="font-size:22px;font-weight:900;color:var(--text);margin-top:2px">${drivers.length}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px">${lightDrivers.length} وزن خفيف · ${sharedDrivers.length} نقل مشترك</div>
           </div>
-        </div>
-        <div class="section-body" style="padding:12px">
-          ${upcomingPeriods.length === 0 ? `
-            <div style="text-align:center;padding:22px;color:var(--text-3);font-size:13px;background:var(--surface-card);border:1px dashed var(--line);border-radius:10px">
-              لا توجد مهام قادمة لليوم المحدد لهذه الفرقة
-            </div>
-          ` : upcomingPeriods.map(op => renderOperationalPeriodCard(op, driverMap, teamMap, isMgr, false)).join('')}
-        </div>
-      </div>
 
-      <!-- SQUAD DRIVERS FIELD READINESS (FILTERED TO THIS SQUAD ONLY) -->
-      <div class="section" style="margin-bottom:16px">
-        <div class="section-head" style="background:var(--surface-2);border-radius:12px 12px 0 0;padding:12px 14px">
-          <div class="title" style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:16px">${activeOpsFilter === 'SHARED' ? '🚌' : '🚗'}</span>
-            <span style="font-weight:800;font-size:14px">جاهزية سواق ${activeOpsFilter === 'SHARED' ? 'فرقة النقل المشترك' : 'فرقة الوزن الخفيف'} (${squadDrivers.length} سائق)</span>
+          <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:10px;padding:12px 14px">
+            <div style="font-size:11px;color:#10b981;font-weight:800">🟢 يقودون بالميدان الآن</div>
+            <div style="font-size:22px;font-weight:900;color:#10b981;margin-top:2px">${activeDrivingDrivers.length}</div>
+            <div style="font-size:10px;color:var(--text-2);margin-top:2px">
+              ${activeDrivingDrivers.length > 0 ? activeDrivingDrivers.map(d => esc(d.name)).join('، ') : 'لا أحد يقود في هذه اللحظة'}
+            </div>
+          </div>
+
+          <div style="background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:12px 14px">
+            <div style="font-size:11px;color:#2563eb;font-weight:800">✅ جاهزون ومتاحون للعمل</div>
+            <div style="font-size:22px;font-weight:900;color:#2563eb;margin-top:2px">${availableDrivers.length}</div>
+            <div style="font-size:10px;color:var(--text-2);margin-top:2px">
+              ${availableDrivers.filter(d => d.category !== DRIVER_CATEGORY.SHARED).length} خفيف · ${availableDrivers.filter(d => d.category === DRIVER_CATEGORY.SHARED).length} نقل مشترك
+            </div>
+          </div>
+
+          <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px">
+            <div style="font-size:11px;color:var(--text-3);font-weight:700">💤 في راحة أو إجازة</div>
+            <div style="font-size:22px;font-weight:900;color:var(--text-2);margin-top:2px">${unavailableDrivers.length}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px">غير متاحين حالياً</div>
           </div>
         </div>
-        <div class="section-body" style="padding:14px">
-          <!-- Driving Now -->
-          <div style="margin-bottom:12px">
-            <div style="font-size:12px;font-weight:800;color:var(--ok,#10b981);margin-bottom:6px">
-              🟢 يقودون في الميدان الآن (${squadDrivingNow.length}):
+
+        <!-- TWO FACING COLUMNS: SUGGESTED LIGHT DRIVERS vs SUGGESTED SHARED DRIVERS -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(310px, 1fr));gap:16px;margin-bottom:18px">
+          <!-- 🚗 مقترحو الوزن الخفيف بالدور -->
+          <div style="background:rgba(37,99,235,0.03);border:1px solid rgba(37,99,235,0.2);border-radius:12px;padding:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid rgba(37,99,235,0.15)">
+              <div style="font-size:13px;font-weight:900;color:var(--text);display:flex;align-items:center;gap:6px">
+                <span>🚗</span>
+                <span>سواق الوزن الخفيف المقترحون بالدور:</span>
+              </div>
+              <span style="font-size:10px;font-weight:800;background:rgba(37,99,235,0.12);color:#2563eb;padding:2px 8px;border-radius:6px">
+                الأقل ساعات
+              </span>
             </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${squadDrivingNow.length === 0 ? '<span style="font-size:12px;color:var(--text-3)">لا أحد يقود حالياً</span>' : squadDrivingNow.map(d => {
-                const tm = teamMap.get(d.teamId);
-                return `
-                  <div class="tag" style="background:var(--ok,#10b981)22;color:var(--ok,#10b981);font-weight:800;padding:6px 12px;border-radius:8px;font-size:12px;display:flex;align-items:center;gap:6px">
-                    <span>${d.category === DRIVER_CATEGORY.SHARED ? '🚌' : '🚗'}</span>
-                    <span>${esc(d.name)}</span>
-                    ${tm ? `<span style="opacity:0.8">(${esc(tm.name)})</span>` : ''}
+
+            ${suggestedLight.length > 0 ? `
+              <div style="display:flex;flex-direction:column;gap:6px">
+                ${suggestedLight.slice(0, 4).map((d, idx) => {
+                  const tm = teamMap.get(d.teamId);
+                  return `
+                    <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                      <div class="driver-clickable" data-open-driver="${d.id}" style="cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:11px;font-weight:900;color:#2563eb;background:rgba(37,99,235,0.1);width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center">${idx + 1}</span>
+                        <div>
+                          <div style="font-size:12px;font-weight:800;color:var(--text)">${esc(d.name)}</div>
+                          <div style="font-size:10px;color:var(--text-3)">${tm?.name ? esc(tm.name) : 'الفرقة الرئيسية'} · ✅ متاح بالدور</div>
+                        </div>
+                      </div>
+                      ${isMgr ? `
+                        <button type="button" class="btn-toggle-driver-status" data-drid="${d.id}" data-curstatus="${d.status}" style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;border:1px solid rgba(16,185,129,0.3);background:rgba(16,185,129,0.1);color:#10b981;cursor:pointer" title="تبديل الحالة">
+                          ✅ متاح
+                        </button>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : `
+              <div style="font-size:11px;color:var(--text-3);padding:10px;text-align:center;background:var(--surface-card);border-radius:8px;border:1px dashed var(--line)">
+                جميع سواق الوزن الخفيف مكلفون أو غير متاحين حالياً
+              </div>
+            `}
+          </div>
+
+          <!-- 🚌 مقترحو النقل المشترك بالدور -->
+          <div style="background:rgba(16,185,129,0.03);border:1px solid rgba(16,185,129,0.2);border-radius:12px;padding:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid rgba(16,185,129,0.15)">
+              <div style="font-size:13px;font-weight:900;color:var(--text);display:flex;align-items:center;gap:6px">
+                <span>🚌</span>
+                <span>سواق النقل المشترك المقترحون بالدور:</span>
+              </div>
+              <span style="font-size:10px;font-weight:800;background:rgba(16,185,129,0.12);color:#059669;padding:2px 8px;border-radius:6px">
+                الأقل ساعات
+              </span>
+            </div>
+
+            ${suggestedShared.length > 0 ? `
+              <div style="display:flex;flex-direction:column;gap:6px">
+                ${suggestedShared.slice(0, 4).map((d, idx) => {
+                  const tm = teamMap.get(d.teamId);
+                  return `
+                    <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                      <div class="driver-clickable" data-open-driver="${d.id}" style="cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:11px;font-weight:900;color:#059669;background:rgba(16,185,129,0.1);width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center">${idx + 1}</span>
+                        <div>
+                          <div style="font-size:12px;font-weight:800;color:var(--text)">${esc(d.name)}</div>
+                          <div style="font-size:10px;color:var(--text-3)">${tm?.name ? esc(tm.name) : 'نقل مشترك'} · ✅ متاح بالدور</div>
+                        </div>
+                      </div>
+                      ${isMgr ? `
+                        <button type="button" class="btn-toggle-driver-status" data-drid="${d.id}" data-curstatus="${d.status}" style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;border:1px solid rgba(16,185,129,0.3);background:rgba(16,185,129,0.1);color:#10b981;cursor:pointer" title="تبديل الحالة">
+                          ✅ متاح
+                        </button>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : `
+              <div style="font-size:11px;color:var(--text-3);padding:10px;text-align:center;background:var(--surface-card);border-radius:8px;border:1px dashed var(--line)">
+                جميع سواق النقل المشترك مكلفون أو غير متاحين حالياً
+              </div>
+            `}
+          </div>
+        </div>
+
+        <!-- READINESS STATUS LIST OF ALL DRIVERS (COLLAPSIBLE / FAST SWITCHER) -->
+        <details style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+          <summary style="font-size:12px;font-weight:800;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+            <span>📋 كشف جاهزية جميع السواق والتبديل السريع للحالة (${drivers.length} سائق)</span>
+            <span style="font-size:11px;color:var(--text-3)">انقر للعرض/الإخفاء ▾</span>
+          </summary>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:8px;margin-top:10px;max-height:360px;overflow-y:auto;padding-right:2px">
+            ${drivers.map(d => {
+              const isDriving = drivingDriverIds.has(d.id);
+              const isAvail = d.status === STATUS.AVAILABLE;
+              const isShared = d.category === DRIVER_CATEGORY.SHARED;
+              return `
+                <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;gap:6px">
+                  <div class="driver-clickable" data-open-driver="${d.id}" style="cursor:pointer;display:flex;align-items:center;gap:6px">
+                    <span>${isShared ? '🚌' : '🚗'}</span>
+                    <span style="font-size:12px;font-weight:800;color:var(--text)">${esc(d.name)}</span>
                   </div>
-                `;
-              }).join('')}
-            </div>
+                  ${isMgr ? `
+                    <button type="button" class="btn-toggle-driver-status" data-drid="${d.id}" data-curstatus="${d.status}" style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;border:1px solid ${isDriving ? 'rgba(16,185,129,0.3)' : isAvail ? 'rgba(37,99,235,0.3)' : 'rgba(239,68,68,0.3)'};background:${isDriving ? 'rgba(16,185,129,0.1)' : isAvail ? 'rgba(37,99,235,0.08)' : 'rgba(239,68,68,0.08)'};color:${isDriving ? '#10b981' : isAvail ? '#2563eb' : '#ef4444'};cursor:pointer">
+                      ${isDriving ? '🟢 يقود الآن' : isAvail ? '✅ متاح' : '🔴 ' + (STATUS_AR[d.status] || d.status)}
+                    </button>
+                  ` : `
+                    <span style="font-size:10px;font-weight:800;color:${isAvail ? '#10b981' : '#ef4444'}">
+                      ${STATUS_AR[d.status] || d.status}
+                    </span>
+                  `}
+                </div>
+              `;
+            }).join('')}
           </div>
-
-          <!-- Standby / Available -->
-          <div style="margin-bottom:12px">
-            <div style="font-size:12px;font-weight:800;color:var(--text);margin-bottom:6px">
-              ⚪ متاحون في وضع الاستعداد (${squadAvailable.length}):
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${squadAvailable.length === 0 ? '<span style="font-size:12px;color:var(--text-3)">لا يوجد سواق متاحون في هذه الفرقة</span>' : squadAvailable.map(d => {
-                const tm = teamMap.get(d.teamId);
-                return `
-                  <div class="tag" style="background:var(--surface-2);color:var(--text);padding:5px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:5px">
-                    <span>${d.category === DRIVER_CATEGORY.SHARED ? '🚌' : '🚗'}</span>
-                    <b>${esc(d.name)}</b>
-                    ${tm ? `<span style="color:var(--text-3)">· ${esc(tm.name)}</span>` : ''}
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-
-          <!-- Unavailable -->
-          <div>
-            <div style="font-size:12px;font-weight:800;color:var(--danger,#ef4444);margin-bottom:6px">
-              🔴 غير متاحين حالياً (${squadUnavailable.length}):
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${squadUnavailable.length === 0 ? '<span style="font-size:12px;color:var(--text-3)">الجميع متاحون</span>' : squadUnavailable.map(d => {
-                return `
-                  <div class="tag" style="background:var(--danger,#ef4444)18;color:var(--danger,#ef4444);padding:5px 10px;border-radius:8px;font-size:11px">
-                    ${esc(d.name)} (${STATUS_AR[d.status] || d.status})
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-        </div>
+        </details>
       </div>
     `}
   `;
@@ -419,8 +483,10 @@ export async function renderHome(main) {
   // Attach Event Handlers
   main.querySelector('#btnPrevDay').onclick = () => { currentDate = addDays(currentDate, -1); refresh(); };
   main.querySelector('#btnNextDay').onclick = () => { currentDate = addDays(currentDate, 1); refresh(); };
+  main.querySelector('#btnNavYesterday').onclick = () => { currentDate = yesterday; refresh(); };
   main.querySelector('#btnNavToday').onclick = () => { currentDate = todayIso(); refresh(); };
   main.querySelector('#btnNavTomorrow').onclick = () => { currentDate = tomorrow; refresh(); };
+  main.querySelector('#btnNavDayAfter').onclick = () => { currentDate = dayAfterTomorrow; refresh(); };
 
   // Direct Date Picker Change
   const datePicker = main.querySelector('#directDateInput');
@@ -433,46 +499,86 @@ export async function renderHome(main) {
     };
   }
 
-  // Quick studio
-  main.querySelector('#btnQuickCreateOcc')?.addEventListener('click', () => {
-    openCreateOccurrenceModal();
-  });
-
-  // Squad selection tabs
-  main.querySelectorAll('[data-ops-filter]').forEach(btn => {
-    btn.onclick = () => {
-      activeOpsFilter = btn.dataset.opsFilter;
+  // Driver Roster Toggle Button
+  const btnToggleRoster = main.querySelector('#btnToggleDriverRoster');
+  if (btnToggleRoster) {
+    btnToggleRoster.onclick = () => {
+      activeOpsFilter = activeOpsFilter === 'DRIVERS_ROSTER' ? 'ALL' : 'DRIVERS_ROSTER';
       renderHome(main);
-    };
-  });
-
-  // Search input in Driver Schedule view
-  const searchInput = main.querySelector('#driverSearchInput');
-  if (searchInput) {
-    searchInput.oninput = (e) => {
-      driverSearchQuery = e.target.value.toLowerCase().trim();
-      const cards = main.querySelectorAll('.driver-roster-card');
-      cards.forEach(card => {
-        const name = card.dataset.driverName || '';
-        if (!driverSearchQuery || name.includes(driverSearchQuery)) {
-          card.style.display = '';
-        } else {
-          card.style.display = 'none';
-        }
-      });
     };
   }
 
-  // Wire Smart Turn Suggestions with strict category enforcement
-  main.querySelectorAll('[data-op-suggest]').forEach(btn => {
+  // Mission Search Filter
+  const misSearch = main.querySelector('#missionSearchInput');
+  if (misSearch) {
+    misSearch.oninput = (e) => {
+      missionSearchQuery = e.target.value.toLowerCase().trim();
+      renderHome(main);
+    };
+  }
+
+  // Quick Mission Toggle & Save
+  main.querySelector('#btnToggleQuickMission')?.addEventListener('click', () => {
+    quickMissionOpen = !quickMissionOpen;
+    renderHome(main);
+  });
+  main.querySelector('#btnCancelQuickMis')?.addEventListener('click', () => {
+    quickMissionOpen = false;
+    renderHome(main);
+  });
+  main.querySelector('#btnSaveQuickMis')?.addEventListener('click', async () => {
+    const name = main.querySelector('#quickMisName')?.value?.trim();
+    const startTime = main.querySelector('#quickMisStart')?.value || '08:00';
+    const endTime = main.querySelector('#quickMisEnd')?.value || '16:00';
+    const driversNeeded = Number(main.querySelector('#quickMisDrivers')?.value) || 1;
+
+    if (!name) {
+      toast('يرجى كتابة اسم المهمة', 2200, 'error');
+      return;
+    }
+
+    try {
+      const startMin = toMin(startTime);
+      const endMin = toMin(endTime);
+      const dur = endMin >= startMin ? (endMin - startMin) : (1440 - startMin + endMin);
+
+      const mid = await createMission({
+        name,
+        type: 'NORMAL',
+        startTime,
+        endTime,
+        durationMinutes: dur,
+        driversNeeded,
+        driverCategory: activeOpsFilter === 'SHARED' ? 'SHARED' : 'LIGHT'
+      });
+
+      await createOccurrence({
+        dateIso: currentDate,
+        missionId: mid,
+        startTime,
+        durationMinutes: dur
+      });
+
+      quickMissionOpen = false;
+      toast('تمت جدولة المهمة بنجاح!', 2200, 'success');
+      refresh();
+    } catch (e) {
+      toast(e.message, 2500, 'error');
+    }
+  });
+
+  // 1-CLICK INSTANT DUE DRIVER ROTATION ASSIGN
+  main.querySelectorAll('[data-quick-assign-suggest]').forEach(btn => {
     btn.onclick = async () => {
       const mid = Number(btn.dataset.mid);
       const pcode = btn.dataset.pcode;
       const occid = Number(btn.dataset.occid);
       const startIso = btn.dataset.start;
       const endIso = btn.dataset.end;
-      const teamId = Number(btn.dataset.teamid) || null;
       const reqCat = btn.dataset.reqcat || DRIVER_CATEGORY.LIGHT;
+
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري التعيين...';
 
       try {
         const res = await suggestForTurn({
@@ -481,89 +587,138 @@ export async function renderHome(main) {
           occurrenceId: occid,
           startIso,
           endIso,
-          targetTeamId: teamId,
           requiredCategory: reqCat
         });
 
         if (!res.proposed) {
-          toast(res.reason || 'لا يوجد سائق متاح حالياً مطابق للصنف', 3000, 'error');
+          toast(res.reason || 'لا يوجد سائق متاح حالياً بالفرقة', 2500, 'error');
+          btn.disabled = false;
+          btn.textContent = '⚡ تعيين المستحق بالدور';
           return;
         }
 
-        const catName = (res.proposed.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.SHARED ? 'نقل مشترك' : 'وزن خفيف';
-        const msg = `اقتراح السائق المستحق بالدور: ${res.proposed.name} (${catName})\n\nالتعليل: ${res.reason}\n\nهل تريد تأكيد التعيين في المهمة؟`;
-        if (window.confirm(msg)) {
-          await createProposal({
-            occurrenceId: occid,
-            missionId: mid,
-            periodId: pcode,
-            periodCode: pcode,
-            dueDriverId: res.due?.id || res.proposed.id,
-            plannedDriverId: res.proposed.id,
-            startIso,
-            endIso,
-            rationale: res.reason,
-            autoConfirm: true
-          });
-          toast(`تم تعيين ${res.proposed.name} بنجاح!`, 2200, 'success');
-          refresh();
-        }
+        await createProposal({
+          occurrenceId: occid,
+          missionId: mid,
+          periodId: pcode,
+          periodCode: pcode,
+          dueDriverId: res.due?.id || res.proposed.id,
+          plannedDriverId: res.proposed.id,
+          startIso,
+          endIso,
+          rationale: res.reason,
+          autoConfirm: true
+        });
+
+        toast(`تم تعيين ${res.proposed.name} بنجاح!`, 2200, 'success');
+        refresh();
       } catch (err) {
         toast(err.message, 2500, 'error');
+        btn.disabled = false;
       }
     };
   });
 
-  // Wire manual driver assignment modal (strictly category isolated)
-  main.querySelectorAll('[data-op-assign-manual]').forEach(btn => {
-    btn.onclick = () => {
+  // INLINE MANUAL DRIVER ASSIGNMENT (2 CLICKS: PICK + CLICK)
+  main.querySelectorAll('.btn-quick-manual-assign').forEach(btn => {
+    btn.onclick = async () => {
+      const slotBox = btn.closest('[data-slot-box]');
+      if (!slotBox) return;
+      const select = slotBox.querySelector('.quick-manual-select');
+      const driverId = Number(select?.value);
+      if (!driverId) {
+        toast('اختر سائقاً من القائمة أولاً', 2000, 'warn');
+        return;
+      }
+
+      const occid = Number(btn.dataset.occid);
       const mid = Number(btn.dataset.mid);
       const pcode = btn.dataset.pcode;
-      const occid = Number(btn.dataset.occid);
-      const startStr = btn.dataset.start;
-      const endStr = btn.dataset.end;
-      const reqCat = btn.dataset.reqcat || DRIVER_CATEGORY.LIGHT;
+      const startIso = btn.dataset.start;
+      const endIso = btn.dataset.end;
 
-      openAssignDriverModal({
-        missionId: mid,
-        periodCode: pcode,
-        occurrenceId: occid,
-        defaultStart: startStr,
-        defaultEnd: endStr,
-        requiredCategory: reqCat,
-        drivers,
-        teams
-      });
+      try {
+        await createProposal({
+          occurrenceId: occid,
+          missionId: mid,
+          periodId: pcode,
+          periodCode: pcode,
+          dueDriverId: driverId,
+          plannedDriverId: driverId,
+          startIso,
+          endIso,
+          rationale: 'تعيين مباشر من قائد الفرقة',
+          replacementReason: 'تعيين مباشر',
+          autoConfirm: true
+        });
+        toast('تم تعيين السائق بنجاح!', 2000, 'success');
+        refresh();
+      } catch (e) {
+        toast(e.message, 2500, 'error');
+      }
     };
   });
 
-  // Wire driver timing edit modal
-  main.querySelectorAll('[data-op-edit-timing]').forEach(btn => {
+  // INLINE TIME EDITING (AUTO-SAVES WITH REAL-TIME DURATION UPDATE)
+  main.querySelectorAll('.time-input-inline').forEach(input => {
+    input.onchange = async () => {
+      const asgId = Number(input.dataset.asgid);
+      const slot = input.closest('[data-asg-slot]');
+      if (!slot) return;
+      const startInput = slot.querySelector('[data-field="start"]');
+      const endInput = slot.querySelector('[data-field="end"]');
+      const indicator = slot.querySelector('.save-badge');
+      const durLabel = slot.querySelector('.dr-dur-label');
+
+      const newStartVal = startInput?.value;
+      const newEndVal = endInput?.value;
+
+      if (durLabel && newStartVal && newEndVal) {
+        const dObj = calcDuration(newStartVal, newEndVal);
+        durLabel.textContent = dObj.humanText || '—';
+      }
+
+      try {
+        const newStartIso = `${currentDate}T${newStartVal}:00`;
+        const newEndIso = `${currentDate}T${newEndVal}:00`;
+
+        await updateAssignmentTiming(asgId, { startIso: newStartIso, endIso: newEndIso });
+        if (indicator) {
+          indicator.style.display = 'inline';
+          setTimeout(() => { indicator.style.display = 'none'; }, 2000);
+        }
+        toast('تم تحديث وحفظ توقيت عمل السائق بالمهمة!', 1600, 'success');
+      } catch (e) {
+        toast(e.message, 2500, 'error');
+      }
+    };
+  });
+
+  // EDIT OVERALL MISSION TIMING MODAL
+  main.querySelectorAll('.btn-edit-mission-time').forEach(btn => {
     btn.onclick = () => {
-      const asgId = Number(btn.dataset.asgid);
-      const drName = btn.dataset.drname;
-      const startStr = btn.dataset.start;
-      const endStr = btn.dataset.end;
-
-      openEditDriverTimingModal({
-        assignmentId: asgId,
-        driverName: drName,
-        currentStart: startStr,
-        currentEnd: endStr
+      const occId = Number(btn.dataset.occid);
+      const missionName = btn.dataset.mname;
+      const curStart = btn.dataset.curstart;
+      const curEnd = btn.dataset.curend;
+      openEditMissionTimingModal({
+        occurrenceId: occId,
+        missionName,
+        currentStart: curStart,
+        currentEnd: curEnd,
+        currentDate
       });
     };
   });
 
-  // Wire commit execution
+  // 1-CLICK COMMIT EXECUTION
   main.querySelectorAll('[data-op-commit]').forEach(btn => {
     btn.onclick = async () => {
       const asgId = Number(btn.dataset.asgid);
-      const drId = Number(btn.dataset.drid);
+      const occId = Number(btn.dataset.occid);
       const mid = Number(btn.dataset.mid);
       const pcode = btn.dataset.pcode;
-      const occId = Number(btn.dataset.occid);
-
-      if (!window.confirm('هل تود تأكيد وتسجيل تنفيذ السائق لهذه المهمة ميدانياً؟')) return;
+      const drId = Number(btn.dataset.drid);
 
       try {
         await commitExecution({
@@ -581,26 +736,12 @@ export async function renderHome(main) {
     };
   });
 
-  // Wire confirm assignment
-  main.querySelectorAll('[data-op-confirm]').forEach(btn => {
-    btn.onclick = async () => {
-      try {
-        await confirmProposal(Number(btn.dataset.asgid));
-        toast('تم تأكيد التكليف بنجاح', 2000, 'success');
-        refresh();
-      } catch (err) {
-        toast(err.message, 2500, 'error');
-      }
-    };
-  });
-
-  // Wire remove assignment
+  // 1-CLICK REMOVE ASSIGNMENT
   main.querySelectorAll('[data-op-remove]').forEach(btn => {
     btn.onclick = async () => {
-      if (!window.confirm('هل تريد إلغاء تكليف هذا السائق من المهمة؟')) return;
       try {
-        await cancelAssignment(Number(btn.dataset.asgid), 'إلغاء يدوي من لوحة العمليات');
-        toast('تم إلغاء التعيين بنجاح', 2000, 'success');
+        await cancelAssignment(Number(btn.dataset.asgid), 'إلغاء من قائد الفرقة');
+        toast('تم إلغاء التكليف بنجاح', 2000, 'success');
         refresh();
       } catch (err) {
         toast(err.message, 2500, 'error');
@@ -608,262 +749,355 @@ export async function renderHome(main) {
     };
   });
 
-  main.querySelectorAll('.btn-primary, .btn-ghost, .tag, .filter-pill').forEach(attachRipple);
+  // 1-CLICK DRIVER STATUS TOGGLE (متاح ⇄ إجازة)
+  main.querySelectorAll('.btn-toggle-driver-status').forEach(btn => {
+    btn.onclick = async () => {
+      const drId = Number(btn.dataset.drid);
+      const cur = btn.dataset.curstatus;
+      const next = cur === STATUS.AVAILABLE ? STATUS.VACATION : STATUS.AVAILABLE;
+
+      try {
+        await setDriverStatus(drId, next, 'تبديل سريع من لوحة العمليات');
+        toast(`تم تحويل حالة السائق إلى: ${STATUS_AR[next] || next}`, 2000, 'info');
+        refresh();
+      } catch (e) {
+        toast(e.message, 2500, 'error');
+      }
+    };
+  });
+
+  // OPEN ADD TODAY MISSION SHEET (REGISTERED CATALOG OR NEW CUSTOM)
+  main.querySelector('#btnOpenAddTodayMission')?.addEventListener('click', () => {
+    openAddTodayMissionSheet(currentDate, activeOpsFilter);
+  });
+
+  // OPEN DRIVER PROFILE SHEET (CLICKING ANY DRIVER ANYWHERE)
+  main.querySelectorAll('[data-open-driver]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const drId = Number(el.dataset.openDriver);
+      if (drId) {
+        openDriverProfileSheet(drId, currentDate);
+      }
+    });
+  });
+
+  // OPEN INTERACTIVE DRIVER PICKER SHEET (WITH LÉGER / TRANSPORT TABS, REST & TURNS)
+  main.querySelectorAll('[data-pick-driver]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const mid = Number(btn.dataset.mid);
+      const pcode = btn.dataset.pcode;
+      const occid = Number(btn.dataset.occid);
+      const startIso = btn.dataset.start;
+      const endIso = btn.dataset.end;
+      const reqCat = btn.dataset.reqcat;
+
+      const occ = occurrences.find(o => o.id === occid);
+      const mis = missionMap.get(mid);
+      if (!occ || !mis) return;
+
+      const periods = getMissionPeriods(mis);
+      const period = periods.find(p => (p.code || p.id) === pcode) || { code: pcode, name: 'فترة التكليف' };
+
+      openDriverPickerSheet({
+        mission: mis,
+        period,
+        occurrence: occ,
+        currentDate,
+        startIso,
+        endIso,
+        initialCategory: reqCat
+      });
+    };
+  });
+
+  main.querySelectorAll('.btn-primary, .btn-ghost, .day-chip-btn').forEach(attachRipple);
 }
 
 // ═══════════════════════════════════════
-// Driver Schedule View ("وتظهر مهام السواق للسواق")
+// Edit Mission Timing Modal (Overall Occurrence Time)
 // ═══════════════════════════════════════
-function renderDriverRosterView({ drivers, lightDrivers, sharedDrivers, allAssignments, missionMap, teamMap, currentDate, isMgr }) {
-  return `
-    <div class="card" style="padding:16px;margin-bottom:16px;border:1px solid var(--line);background:var(--surface-card)">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-        <div>
-          <h3 style="font-size:16px;font-weight:900;margin:0;color:var(--text)">جدول مهام السواق الميداني</h3>
-          <div style="font-size:12px;color:var(--text-3);margin-top:2px">
-            استعراض المهام المجدولة لكل سائق، أوقات البداية والنهاية، وحالة التنفيذ
+function openEditMissionTimingModal({ occurrenceId, missionName, currentStart, currentEnd, currentDate }) {
+  sheet({
+    title: `✏️ تعديل توقيت المهمة`,
+    subtitle: `${missionName} · تاريخ ${humanDate(currentDate)}`,
+    builder: (body, close) => {
+      body.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:16px;padding:6px 0">
+          <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px">
+            <div style="font-size:14px;color:var(--text);font-weight:900;margin-bottom:4px">📌 ${esc(missionName)}</div>
+            <div style="font-size:12px;color:var(--text-3)">تعديل وقت البداية والنهاية الإجمالي للمهمة اليوم بالكامل</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label style="font-size:12px;font-weight:800;color:var(--text);display:block;margin-bottom:6px">⏰ وقت بداية المهمة (من)</label>
+              <input type="time" id="editOccStart" value="${currentStart}" class="input" style="width:100%;font-size:15px;padding:10px 12px;font-weight:800;border-radius:8px">
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:800;color:var(--text);display:block;margin-bottom:6px">🏁 وقت نهاية المهمة (إلى)</label>
+              <input type="time" id="editOccEnd" value="${currentEnd}" class="input" style="width:100%;font-size:15px;padding:10px 12px;font-weight:800;border-radius:8px">
+            </div>
+          </div>
+
+          <div id="editOccDurationPreview" style="font-size:13px;font-weight:800;color:var(--color-accent);background:var(--surface-card);border:1px solid var(--line);padding:10px 14px;border-radius:8px;text-align:center">
+            المدة الإجمالية: ${(calcDuration(currentStart, currentEnd).humanText || '—')}
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+            <button type="button" class="btn-ghost" id="btnCancelEditOcc" style="padding:10px 18px;font-size:13px;border-radius:8px">إلغاء</button>
+            <button type="button" class="btn-primary" id="btnSaveEditOcc" style="padding:10px 22px;font-size:13px;font-weight:900;border-radius:8px;background:var(--color-accent);color:#fff">
+              💾 حفظ توقيت المهمة
+            </button>
           </div>
         </div>
+      `;
 
-        <div style="width:260px">
-          <input type="text" id="driverSearchInput" class="input" placeholder="🔍 ابحث عن اسم السائق..." style="width:100%;padding:8px 12px;font-size:12px">
-        </div>
-      </div>
+      const startInp = body.querySelector('#editOccStart');
+      const endInp = body.querySelector('#editOccEnd');
+      const durPrev = body.querySelector('#editOccDurationPreview');
 
-      <!-- Two Separate Squad Sections -->
-      <!-- 1. SQUAD LIGHT DRIVERS -->
-      <div style="margin-bottom:20px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid var(--line)">
-          <span style="font-size:18px">🚗</span>
-          <span style="font-weight:900;font-size:14px;color:var(--text)">فرقة سواق الوزن الخفيف (${lightDrivers.length} سائق)</span>
-        </div>
+      const updateDur = () => {
+        const dObj = calcDuration(startInp.value, endInp.value);
+        durPrev.textContent = `المدة الإجمالية: ${dObj.humanText || '—'}`;
+      };
+      startInp.oninput = updateDur;
+      endInp.oninput = updateDur;
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:10px">
-          ${lightDrivers.map(d => renderSingleDriverCard(d, allAssignments, missionMap, teamMap, isMgr)).join('')}
-        </div>
-      </div>
+      body.querySelector('#btnCancelEditOcc').onclick = close;
+      body.querySelector('#btnSaveEditOcc').onclick = async () => {
+        const sVal = startInp.value;
+        const eVal = endInp.value;
+        if (!sVal || !eVal) return toast('يرجى تحديد وقتي البداية والنهاية', 2200, 'warn');
 
-      <!-- 2. SQUAD SHARED DRIVERS -->
-      <div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid var(--line)">
-          <span style="font-size:18px">🚌</span>
-          <span style="font-weight:900;font-size:14px;color:var(--text)">فرقة سواق النقل المشترك (${sharedDrivers.length} سائق)</span>
-        </div>
+        const sMin = toMin(sVal);
+        const eMin = toMin(eVal);
+        const dur = eMin >= sMin ? (eMin - sMin) : (1440 - sMin + eMin);
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:10px">
-          ${sharedDrivers.map(d => renderSingleDriverCard(d, allAssignments, missionMap, teamMap, isMgr)).join('')}
-        </div>
-      </div>
-    </div>
-  `;
+        try {
+          await updateOccurrence(Number(occurrenceId), {
+            startTime: sVal,
+            durationMinutes: dur
+          });
+          toast('تم تحديث توقيت المهمة بنجاح!', 2500, 'success');
+          close();
+          refresh();
+        } catch (e) {
+          toast(e.message, 2500, 'error');
+        }
+      };
+    }
+  });
 }
 
-function renderSingleDriverCard(driver, allAssignments, missionMap, teamMap, isMgr) {
-  const driverAsgs = allAssignments.filter(a =>
-    (a.actualDriverId === driver.id || a.plannedDriverId === driver.id) &&
-    a.status !== ASG_STATUS.CANCELLED
-  );
-
-  const tm = teamMap.get(driver.teamId);
-  const isAvailable = driver.status === STATUS.AVAILABLE;
-  const isLight = (driver.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.LIGHT;
+// ═══════════════════════════════════════
+// Driver Row In Mission (Clean, Sleek & Direct)
+// ═══════════════════════════════════════
+function renderDriverRowInMission(a, dr, occ, m, periodCode, defStart, defEnd, isMgr, forcedCat) {
+  const isExecuted = Boolean(a.executedAt);
+  const drStart = formatTimeHhmm(a.startIso, defStart);
+  const drEnd = formatTimeHhmm(a.endIso, defEnd);
+  const drDurationObj = calcDuration(drStart, drEnd);
+  const drDuration = drDurationObj.humanText || '—';
+  const cat = dr?.category || forcedCat;
 
   return `
-    <div class="driver-roster-card" data-driver-name="${esc(driver.name.toLowerCase())}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px">
-      <!-- Driver Top Header -->
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <div class="av" style="width:34px;height:34px;font-size:13px;font-weight:900;background:var(--surface-card);border:1px solid var(--line)">
-            ${esc(driver.name.charAt(0))}
+    <div class="op-slot-row" data-asg-slot="${a.id}" style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <!-- 1. Driver Identity -->
+      <div style="display:flex;align-items:center;gap:8px;min-width:170px">
+        <div class="driver-clickable" data-open-driver="${dr?.id || ''}" style="display:flex;align-items:center;gap:8px;cursor:pointer" title="انقر لمعاينة ملف السائق المباشر">
+          <div style="width:32px;height:32px;border-radius:7px;background:${cat === DRIVER_CATEGORY.SHARED ? 'linear-gradient(135deg,#047857,#059669)' : 'linear-gradient(135deg,#1d4ed8,#2563eb)'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0">
+            ${esc((dr?.name || '؟').charAt(0))}
           </div>
           <div>
-            <div style="font-weight:900;font-size:13px;color:var(--text)">${esc(driver.name)}</div>
-            <div style="font-size:10px;color:var(--text-3)">
-              ${isLight ? '🚗 وزن خفيف' : '🚌 نقل مشترك'} ${tm ? `· ${esc(tm.name)}` : ''}
+            <div style="font-size:13px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:6px">
+              <span>${esc(dr?.name || 'سائق غير مسجل')}</span>
+              ${isExecuted ? '<span style="font-size:10px;font-weight:800;background:rgba(16,185,129,0.15);color:#10b981;padding:1px 6px;border-radius:4px">✓ نُفّذت</span>' : ''}
+            </div>
+            <div style="font-size:10px;color:var(--text-3);display:flex;align-items:center;gap:4px">
+              <span style="color:${dr?.status === STATUS.AVAILABLE ? 'var(--success)' : 'var(--text-2)'}">${STATUS_AR[dr?.status] || dr?.status || 'متاح'}</span>
             </div>
           </div>
         </div>
+      </div>
 
-        <div>
-          <span class="tag ${isAvailable ? 'ok' : 'warn'}" style="font-size:10px;font-weight:700">
-            ${STATUS_AR[driver.status] || driver.status}
-          </span>
+      <!-- 2. Individual Driver Working Time in Mission (Editable with real-time duration) -->
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;background:var(--surface-2);border:1px solid var(--line);padding:4px 8px;border-radius:7px;flex-wrap:wrap">
+        <span style="color:var(--text-2);font-weight:800">⏰ وقت السائق:</span>
+        <span style="color:var(--text-3);font-weight:700">من</span>
+        <input type="time" class="time-input-inline driver-work-time" value="${drStart}" data-asgid="${a.id}" data-field="start" title="وقت بداية عمل هذا السائق" style="padding:2px 6px;font-size:12px;font-weight:800;border:1px solid var(--line);border-radius:5px;background:var(--surface-card);color:var(--text);width:76px;text-align:center">
+        <span style="color:var(--text-3);font-weight:700">إلى</span>
+        <input type="time" class="time-input-inline driver-work-time" value="${drEnd}" data-asgid="${a.id}" data-field="end" title="وقت نهاية عمل هذا السائق" style="padding:2px 6px;font-size:12px;font-weight:800;border:1px solid var(--line);border-radius:5px;background:var(--surface-card);color:var(--text);width:76px;text-align:center">
+        <span class="dr-dur-label" style="color:var(--color-accent);font-weight:800;font-size:11px">(${drDuration})</span>
+        <span class="save-badge" style="display:none;color:#10b981;font-weight:800;font-size:10px">✓ حُفظ</span>
+      </div>
+
+      <!-- 3. Actions -->
+      ${isMgr ? `
+        <div style="display:flex;align-items:center;gap:6px">
+          ${!isExecuted ? `
+            <button type="button" class="btn-commit-exec" data-op-commit="1" data-asgid="${a.id}" data-drid="${dr?.id}" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" style="padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;background:rgba(16,185,129,0.12);color:#059669;border:1px solid rgba(16,185,129,0.3);cursor:pointer;white-space:nowrap" title="تسجيل التنفيذ الفعلي">
+              🏁 تنفيذ
+            </button>
+          ` : ''}
+          <button type="button" class="day-chip-btn" data-op-remove="1" data-asgid="${a.id}" style="padding:4px 8px;font-size:11px;color:#ef4444;border-radius:6px;border:1px solid rgba(239,68,68,0.25);background:rgba(239,68,68,0.06);cursor:pointer;white-space:nowrap" title="إلغاء التكليف">
+            ✕ إزالة
+          </button>
         </div>
-      </div>
-
-      <!-- Missions Assigned Today -->
-      <div style="margin-top:4px">
-        ${driverAsgs.length === 0 ? `
-          <div style="font-size:11px;color:var(--text-3);padding:8px 10px;background:var(--surface-card);border-radius:8px;border:1px dashed var(--line);text-align:center">
-            لا توجد مهام مسندة لهذا السائق في هذا اليوم (جاهز / في راحة)
-          </div>
-        ` : driverAsgs.map(a => {
-          const m = missionMap.get(a.missionId);
-          const st = a.startIso ? a.startIso.slice(11, 16) : '—';
-          const et = a.endIso ? a.endIso.slice(11, 16) : '—';
-          const dur = calcDuration(st, et);
-          const isExec = Boolean(a.executedAt);
-
-          return `
-            <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-                <span style="font-weight:800;font-size:12px;color:var(--text)">${esc(m?.name || 'مهمة مسندة')}</span>
-                ${isExec ? '<span class="tag ok" style="font-size:9px">✓ تم التنفيذ</span>' : '<span class="tag info" style="font-size:9px">مجدولة</span>'}
-              </div>
-              <div style="font-size:11px;color:var(--text-2);margin-top:4px;display:flex;align-items:center;gap:8px">
-                <span>⏰ <b>من ${esc(st)} إلى ${esc(et)}</b></span>
-                <span style="color:var(--text-3)">(${dur})</span>
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
+      ` : ''}
     </div>
   `;
 }
 
 // ═══════════════════════════════════════
-// Operational Period Card (Command Board)
+// Operational Period Card (Missions View)
 // ═══════════════════════════════════════
-function renderOperationalPeriodCard(op, driverMap, teamMap, isMgr, isActiveNow) {
-  const { occurrence: occ, mission: m, period: p, periodCode, range, assignments, needed, shortageCount, category } = op;
-  const startStr = p.startTime || m.startTime || '17:00';
-  const endStr = p.endTime || m.endTime || fromMinSafe(toMin(startStr) + (p.durationMinutes || 360));
-  const team = teamMap.get(m.teamId);
-  const totalPeriodDur = calcDuration(startStr, endStr);
+function renderOperationalPeriodCard(op, driverMap, teamMap, squadDrivers, isMgr) {
+  const { occurrence: occ, mission: m, period: p, periodCode, range, assignments, needed, shortageCount, isActiveNow, isUpcomingToday, category } = op;
+  const team = m.teamId ? teamMap.get(m.teamId) : null;
+  const startStr = range.start.toTimeString().slice(0, 5);
+  const endStr = range.end.toTimeString().slice(0, 5);
+  const totalPeriodDur = calcDuration(startStr, endStr).humanText || '—';
+
+  // Separate assigned drivers into Light Vehicle vs Shared Transport
+  const lightAsgs = [];
+  const sharedAsgs = [];
+
+  for (const a of assignments) {
+    const dr = driverMap.get(a.actualDriverId || a.plannedDriverId);
+    const drCat = dr?.category || category;
+    if (drCat === DRIVER_CATEGORY.SHARED) {
+      sharedAsgs.push({ asg: a, driver: dr });
+    } else {
+      lightAsgs.push({ asg: a, driver: dr });
+    }
+  }
 
   return `
-    <div class="period-op-card" style="background:var(--surface-card);border:1px solid ${isActiveNow ? 'var(--danger,#ef4444)' : 'var(--line)'};border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,0.04)">
-      <!-- Period Header -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            ${isActiveNow ? '<span class="tag danger" style="font-weight:900">🔴 جارية الآن بالميدان</span>' : ''}
-            <span style="font-size:15px;font-weight:900;color:var(--text)">${esc(m.name)}</span>
-            <span class="tag" style="font-size:11px;font-weight:800;background:var(--surface-2)">${esc(p.name)}</span>
-            
-            <!-- Category Badge -->
-            <span class="tag ${category === DRIVER_CATEGORY.SHARED ? 'cat-shared' : 'cat-light'}" style="font-size:10px;font-weight:800">
-              ${category === DRIVER_CATEGORY.SHARED ? '🚌 مهمة نقل مشترك' : '🚗 مهمة وزن خفيف'}
+    <div class="card" style="padding:14px 16px;border:1px solid ${isActiveNow ? 'rgba(239,68,68,0.35)' : 'var(--line)'};border-radius:12px;background:var(--surface-card);box-shadow:var(--shadow-1);margin-bottom:14px">
+      <!-- 1. MISSION HEADER (Title, Category, Timing, Status, Total Drivers) -->
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:15px;font-weight:900;color:var(--text)">📌 ${esc(m.name)}</span>
+          ${p.name && p.name !== 'فترة التكليف' ? `
+            <span style="font-size:11px;font-weight:700;background:var(--surface-2);color:var(--text-2);padding:2px 8px;border-radius:6px">
+              ${esc(p.name)}
             </span>
+          ` : ''}
+          <span class="${category === DRIVER_CATEGORY.SHARED ? 'badge-cat-transport' : 'badge-cat-leger'}">
+            ${category === DRIVER_CATEGORY.SHARED ? '🚌 نقل مشترك' : '🚗 وزن خفيف'}
+          </span>
+          ${isActiveNow ? '<span class="badge-status-driving"><span class="pulse-dot"></span> جارية بالميدان</span>' : ''}
+          ${!isActiveNow && isUpcomingToday ? '<span style="font-size:11px;font-weight:700;color:var(--text-3);background:var(--surface-2);padding:2px 8px;border-radius:6px">⏳ قادمة</span>' : ''}
+        </div>
 
-            ${team ? `
-              <span class="tag" style="background:${esc(team.color || '#3b82f6')}22;color:${esc(team.color || '#3b82f6')};font-size:10px;font-weight:700">
-                ${esc(team.name)}
-              </span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <!-- Mission Timing with Edit Button -->
+          <div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--text);background:var(--surface-2);padding:4px 10px;border-radius:8px;border:1px solid var(--line)">
+            <span>⏰ ${esc(startStr)} — ${esc(endStr)}</span>
+            <span style="font-size:10px;color:var(--text-3);font-weight:normal">(${totalPeriodDur})</span>
+            ${isMgr ? `
+              <button type="button" class="btn-edit-mission-time" data-occid="${occ.id}" data-mname="${esc(m.name)}" data-curstart="${startStr}" data-curend="${endStr}" style="background:none;border:none;cursor:pointer;padding:0 2px;color:var(--text-3);font-size:12px;line-height:1" title="تعديل توقيت المهمة">
+                ✏️
+              </button>
             ` : ''}
           </div>
 
-          <!-- Mission Timings & Durations -->
-          <div style="font-size:12px;color:var(--text-2);margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span>⏱ توقيت المهمة: <b>من ${esc(startStr)} إلى ${esc(endStr)}</b></span>
-            <span>· المدة: <b>${totalPeriodDur}</b></span>
-            <span>· المطلوب: <b>${needed} سواق</b></span>
-          </div>
-        </div>
-
-        <div>
-          <span class="tag ${shortageCount === 0 ? 'ok' : 'warn'}" style="font-weight:800;font-size:12px;padding:6px 12px;border-radius:8px">
-            ${assignments.length}/${needed} سواق معينين
+          <!-- Total Drivers Assigned Status -->
+          <span style="font-size:11px;font-weight:800;color:var(--text);background:var(--surface-2);padding:4px 10px;border-radius:8px;border:1px solid var(--line)">
+            👥 إجمالي السواق: <b>${assignments.length}</b>
           </span>
         </div>
       </div>
 
-      <!-- Assigned Drivers Roster -->
-      <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
-        ${assignments.length === 0 ? `
-          <div style="background:var(--surface-2);border-radius:8px;padding:12px;text-align:center;font-size:12px;color:var(--text-3)">
-            لم يتم تعيين أي سائق لهذه المهمة بعد
-          </div>
-        ` : assignments.map(a => {
-          const dr = driverMap.get(a.actualDriverId || a.plannedDriverId);
-          const dueDr = driverMap.get(a.dueDriverId);
-          const isSub = a.dueDriverId && Number(a.dueDriverId) !== Number(a.actualDriverId || a.plannedDriverId);
-          const isBorrowed = a.source === 'BORROWED' || Boolean(a.loanId);
-          const isConfirmed = a.status === ASG_STATUS.CONFIRMED || a.status === ASG_STATUS.OVERRIDDEN;
-          const isExecuted = Boolean(a.executedAt);
-
-          const drStart = a.startIso ? a.startIso.slice(11, 16) : startStr;
-          const drEnd = a.endIso ? a.endIso.slice(11, 16) : endStr;
-          const drDur = calcDuration(drStart, drEnd);
-          const drCat = dr?.category || DRIVER_CATEGORY.LIGHT;
-
-          return `
-            <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-2);padding:10px 12px;border-radius:10px;gap:10px;flex-wrap:wrap;border:1px solid var(--line)">
-              <div style="display:flex;align-items:center;gap:10px">
-                <div class="av ${isBorrowed ? 'borrowed' : isSub ? 'sub' : 'ok'}" style="width:36px;height:36px;font-size:13px;font-weight:800">
-                  ${esc((dr?.name || '؟').charAt(0))}
-                </div>
-                <div>
-                  <div style="font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                    <span>${esc(dr?.name || 'غير معروف')}</span>
-                    <span class="tag ${drCat === DRIVER_CATEGORY.SHARED ? 'cat-shared' : 'cat-light'}" style="font-size:9px">
-                      ${drCat === DRIVER_CATEGORY.SHARED ? '🚌 نقل مشترك' : '🚗 وزن خفيف'}
-                    </span>
-                    ${isExecuted ? '<span class="tag ok" style="font-size:10px">✓ نُفّذت</span>' : ''}
-                    ${!isExecuted && isConfirmed ? '<span class="tag info" style="font-size:10px">مؤكد</span>' : ''}
-                    ${!isConfirmed ? '<span class="tag warn" style="font-size:10px">بانتظار التأكيد</span>' : ''}
-                    ${isBorrowed ? '<span class="tag borrowed" style="font-size:10px">🔄 مستعار</span>' : ''}
-                  </div>
-
-                  <!-- Driver Precise Timing -->
-                  <div style="font-size:11px;color:var(--text-2);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                    <span>⏰ توقيت السائق: <b>من ${esc(drStart)} إلى ${esc(drEnd)}</b> (${drDur})</span>
-                    ${dueDr && isSub ? `<span style="color:var(--warn,#f59e0b)">· بديل عن المستحق بالدور: <b>${esc(dueDr.name)}</b></span>` : ''}
-                  </div>
-                </div>
-              </div>
-
-              ${isMgr ? `
-                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                  ${!isExecuted ? `
-                    <button class="btn-ghost" data-op-edit-timing="1" data-asgid="${a.id}" data-drname="${esc(dr?.name || '')}" data-start="${drStart}" data-end="${drEnd}" style="cursor:pointer;font-weight:700;padding:5px 10px;font-size:11px;border-radius:6px" title="تعديل توقيت السائق في هذه المهمة">
-                      ⏱ تعديل التوقيت
-                    </button>
-                    <button class="tag ok" data-op-commit="1" data-asgid="${a.id}" data-drid="${dr?.id}" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" style="cursor:pointer;border:0;font-weight:700;padding:5px 10px;border-radius:6px">
-                      🏁 تسجيل التنفيذ
-                    </button>
-                  ` : ''}
-                  ${!isConfirmed ? `
-                    <button class="tag info" data-op-confirm="1" data-asgid="${a.id}" style="cursor:pointer;border:0;font-weight:700;padding:5px 10px;border-radius:6px">
-                      ✅ تأكيد
-                    </button>
-                  ` : ''}
-                  <button class="x" data-op-remove="1" data-asgid="${a.id}" title="إلغاء التكليف">✕</button>
-                </div>
-              ` : ''}
+      <!-- 2. TWO PARALLEL COLUMNS: LIGHT DRIVERS FACING SHARED TRANSPORT DRIVERS -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(310px, 1fr));gap:14px;align-items:start">
+        <!-- 🚗 A. SECTION: LIGHT VEHICLE DRIVERS (LÉGER) -->
+        <div style="background:rgba(37,99,235,0.02);border:1px solid rgba(37,99,235,0.18);border-radius:10px;padding:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:15px">🚗</span>
+              <span style="font-size:12px;font-weight:900;color:var(--text)">سواق الوزن الخفيف (Léger):</span>
+              <span style="font-size:10px;font-weight:800;background:rgba(37,99,235,0.12);color:#2563eb;padding:1px 8px;border-radius:6px;border:1px solid rgba(37,99,235,0.25)">
+                ${lightAsgs.length} سائق
+              </span>
             </div>
-          `;
-        }).join('')}
-      </div>
 
-      <!-- Action Panel & Shortage Alert -->
-      <div style="margin-top:10px;padding:10px 12px;background:var(--surface-2);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <div>
-          ${shortageCount > 0 ? `
-            <div style="font-weight:800;font-size:12px;color:var(--danger,#ef4444);display:flex;align-items:center;gap:6px">
-              <span>⚠️</span>
-              <span>عجز بمقدار ${shortageCount} سائق في هذه المهمة!</span>
+            ${isMgr ? `
+              <button type="button" class="btn-open-driver-picker" data-pick-driver="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-reqcat="LIGHT" style="padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;background:rgba(37,99,235,0.08);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+                <span>➕</span>
+                <span>إضافة سائق وزن خفيف</span>
+              </button>
+            ` : ''}
+          </div>
+
+          <!-- Light Drivers List -->
+          ${lightAsgs.length > 0 ? `
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${lightAsgs.map(({ asg: a, driver: dr }) => renderDriverRowInMission(a, dr, occ, m, periodCode, startStr, endStr, isMgr, 'LIGHT')).join('')}
             </div>
           ` : `
-            <div style="font-weight:700;font-size:12px;color:var(--ok,#10b981);display:flex;align-items:center;gap:6px">
-              <span>✅</span>
-              <span>اكتمال العدد المطلوب من السواق (${needed} سائق)</span>
+            <div style="font-size:11px;color:var(--text-3);padding:6px 10px;background:var(--surface-card);border-radius:6px;border:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center">
+              <span>لا يوجد سواق وزن خفيف مكلفين حالياً في هذه المهمة</span>
+              ${isMgr ? `
+                <button type="button" class="btn-open-driver-picker" data-pick-driver="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-reqcat="LIGHT" style="background:none;border:none;color:#2563eb;font-size:11px;font-weight:800;cursor:pointer;padding:0 4px">
+                  + تعيين سائق خفيف
+                </button>
+              ` : ''}
             </div>
           `}
         </div>
 
-        ${isMgr ? `
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            ${shortageCount > 0 ? `
-              <button class="tag" data-op-suggest="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-teamid="${m.teamId || ''}" data-reqcat="${category}" style="cursor:pointer;background:var(--color-accent);color:#fff;border:0;font-weight:800;padding:6px 12px;border-radius:8px">
-                💡 اقتراح بالدور العادل
+        <!-- 🚌 B. SECTION: SHARED TRANSPORT DRIVERS (TRANSPORT) -->
+        <div style="background:rgba(16,185,129,0.02);border:1px solid rgba(16,185,129,0.18);border-radius:10px;padding:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:15px">🚌</span>
+              <span style="font-size:12px;font-weight:900;color:var(--text)">سواق حافلات النقل المشترك (Transport):</span>
+              <span style="font-size:10px;font-weight:800;background:rgba(16,185,129,0.12);color:#059669;padding:1px 8px;border-radius:6px;border:1px solid rgba(16,185,129,0.25)">
+                ${sharedAsgs.length} سائق
+              </span>
+            </div>
+
+            ${isMgr ? `
+              <button type="button" class="btn-open-driver-picker" data-pick-driver="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-reqcat="SHARED" style="padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;background:rgba(16,185,129,0.08);color:#059669;border:1px solid rgba(16,185,129,0.3);cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+                <span>➕</span>
+                <span>إضافة سائق نقل مشترك</span>
               </button>
             ` : ''}
+          </div>
 
-            <button class="btn-ghost" data-op-assign-manual="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${startStr}" data-end="${endStr}" data-reqcat="${category}" style="padding:5px 12px;font-size:11px;font-weight:800;border-radius:8px">
-              ➕ تعيين سائق مخصص
-            </button>
+          <!-- Shared Drivers List -->
+          ${sharedAsgs.length > 0 ? `
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${sharedAsgs.map(({ asg: a, driver: dr }) => renderDriverRowInMission(a, dr, occ, m, periodCode, startStr, endStr, isMgr, 'SHARED')).join('')}
+            </div>
+          ` : `
+            <div style="font-size:11px;color:var(--text-3);padding:6px 10px;background:var(--surface-card);border-radius:6px;border:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center">
+              <span>لا يوجد سواق نقل مشترك مكلفين حالياً في هذه المهمة</span>
+              ${isMgr ? `
+                <button type="button" class="btn-open-driver-picker" data-pick-driver="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-reqcat="SHARED" style="background:none;border:none;color:#059669;font-size:11px;font-weight:800;cursor:pointer;padding:0 4px">
+                  + تعيين سائق حافلة
+                </button>
+              ` : ''}
+            </div>
+          `}
+        </div>
+
+        <!-- 3. UNFILLED SHORTAGE ALERT (IF APPLICABLE) -->
+        ${shortageCount > 0 ? `
+          <div style="background:rgba(245,158,11,0.06);border:1px dashed rgba(245,158,11,0.3);border-radius:8px;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="font-size:11px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:6px">
+              <span>⚠️</span>
+              <span>متبقي ${shortageCount} سائق للوصول للحد الأدنى للمهمة (${needed})</span>
+            </div>
+
+            ${isMgr ? `
+              <button type="button" class="btn-instant-assign" data-quick-assign-suggest="1" data-mid="${m.id}" data-pcode="${periodCode}" data-occid="${occ.id}" data-start="${range.start.toISOString()}" data-end="${range.end.toISOString()}" data-reqcat="${category}" style="padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px">
+                ⚡ تعيين المستحق بالدور
+              </button>
+            ` : ''}
           </div>
         ` : ''}
       </div>
@@ -872,214 +1106,109 @@ function renderOperationalPeriodCard(op, driverMap, teamMap, isMgr, isActiveNow)
 }
 
 // ═══════════════════════════════════════
-// Manual Driver Assignment Modal (Strict Category Isolation)
+// Driver Schedule View ("وتظهر مهام السواق للسواق")
 // ═══════════════════════════════════════
-function openAssignDriverModal({ missionId, periodCode, occurrenceId, defaultStart, defaultEnd, requiredCategory, drivers, teams }) {
-  requireWrite('assign.create');
-
-  // STRICT category filtering: Light missions get ONLY Light drivers; Shared missions get ONLY Shared drivers!
-  const eligibleDrivers = drivers.filter(d => {
-    if (requiredCategory && requiredCategory !== DRIVER_CATEGORY.ALL) {
-      const cat = d.category || DRIVER_CATEGORY.LIGHT;
-      if (cat !== requiredCategory && cat !== DRIVER_CATEGORY.ALL) return false;
-    }
-    return true;
-  });
-
-  const teamMap = new Map(teams.map(t => [t.id, t]));
-  let selectedDriverId = eligibleDrivers.find(d => d.status === STATUS.AVAILABLE)?.id || eligibleDrivers[0]?.id;
-  let startTime = defaultStart || '17:00';
-  let endTime = defaultEnd || '23:00';
-
-  const catLabelAr = requiredCategory === DRIVER_CATEGORY.SHARED ? 'سواق النقل المشترك 🚌' : 'سواق الوزن الخفيف 🚗';
-
-  sheet({
-    title: `➕ تعيين سائق في المهمة (${catLabelAr})`,
-    subtitle: 'تحديد السائق المعين وضبط ساعات بدايته ونهايته بدقة',
-    builder: (body, close) => {
-      const render = () => {
-        const dur = calcDuration(startTime, endTime);
-        body.innerHTML = `
-          <div style="display:flex;flex-direction:column;gap:14px">
-            <div>
-              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">اختر السائق المعين (فرقة ${catLabelAr})</label>
-              ${eligibleDrivers.length === 0 ? `
-                <div style="padding:10px;background:var(--danger,#ef4444)15;color:var(--danger,#ef4444);font-size:12px;border-radius:8px">
-                  ⚠️ لا يوجد سواق مسجلون في هذه الفرقة!
-                </div>
-              ` : `
-                <select id="modal_dr_select" class="input" style="width:100%;font-weight:700">
-                  ${eligibleDrivers.map(d => {
-                    const tm = teamMap.get(d.teamId);
-                    const isAvail = d.status === STATUS.AVAILABLE;
-                    return `
-                      <option value="${d.id}" ${d.id === selectedDriverId ? 'selected' : ''}>
-                        ${esc(d.name)} (${STATUS_AR[d.status] || d.status}) ${tm ? `· ${esc(tm.name)}` : ''} ${isAvail ? '✅ متاح' : '⚠️ غير متاح'}
-                      </option>
-                    `;
-                  }).join('')}
-                </select>
-              `}
-            </div>
-
-            <!-- Custom Timing for this Driver -->
-            <div style="background:var(--surface-2);border-radius:10px;padding:12px;border:1px solid var(--line)">
-              <div style="font-size:12px;font-weight:800;color:var(--text);margin-bottom:8px">
-                ⏱ توقيت عمل السائق في هذه المهمة:
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div>
-                  <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px">وقت البداية</label>
-                  <input type="time" id="modal_dr_start" class="input" value="${esc(startTime)}" style="width:100%">
-                </div>
-                <div>
-                  <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px">وقت النهاية</label>
-                  <input type="time" id="modal_dr_end" class="input" value="${esc(endTime)}" style="width:100%">
-                </div>
-              </div>
-              <div style="margin-top:8px;font-size:12px;color:var(--text-3);text-align:center">
-                المدة المحسوبة لساعات عمل السائق: <b style="color:var(--text)">${dur}</b>
-              </div>
-            </div>
-
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn-primary" id="btnConfirmAssign" style="flex:1" ${eligibleDrivers.length === 0 ? 'disabled' : ''}>
-                تأكيد التعيين والجدولة
-              </button>
-              <button class="btn-ghost" id="btnCancelAssign" style="flex:1">إلغاء</button>
-            </div>
+function renderDriverRosterView({ drivers, lightDrivers, sharedDrivers, allAssignments, missionMap, teamMap, currentDate, isMgr }) {
+  return `
+    <div class="card" style="padding:16px;border:1px solid var(--line);background:var(--surface-card);border-radius:14px;box-shadow:var(--shadow-1)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <div>
+          <h3 style="font-size:16px;font-weight:900;margin:0;color:var(--text)">جدول مهام السواق الميداني</h3>
+          <div style="font-size:12px;color:var(--text-3);margin-top:2px">
+            استعراض المهام المسندة لكل سائق، وتوقيت البداية والنهاية الدقيق
           </div>
-        `;
+        </div>
 
-        const startInput = body.querySelector('#modal_dr_start');
-        const endInput = body.querySelector('#modal_dr_end');
+        <div class="roster-search-wrap">
+          <input type="text" id="driverRosterSearchInput" class="input" placeholder="🔍 ابحث عن اسم السائق..." style="width:100%;padding:8px 12px;font-size:12px;border-radius:9px">
+        </div>
+      </div>
 
-        const updateDur = () => {
-          startTime = startInput.value;
-          endTime = endInput.value;
-          render();
-        };
+      <!-- 1. LIGHT DRIVERS SQUAD -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid rgba(37,99,235,0.25)">
+          <span style="font-size:18px">🚗</span>
+          <span style="font-weight:900;font-size:14px;color:var(--text)">فرقة سواق الوزن الخفيف (${lightDrivers.length} سائق)</span>
+        </div>
+        <div class="driver-roster-grid">
+          ${lightDrivers.map(d => renderSingleDriverCard(d, allAssignments, missionMap, teamMap, isMgr)).join('')}
+        </div>
+      </div>
 
-        if (startInput) startInput.onchange = updateDur;
-        if (endInput) endInput.onchange = updateDur;
-
-        body.querySelector('#btnCancelAssign').onclick = close;
-        body.querySelector('#btnConfirmAssign').onclick = async () => {
-          const selectEl = body.querySelector('#modal_dr_select');
-          if (!selectEl) return;
-          const drId = Number(selectEl.value);
-          const st = startInput.value;
-          const et = endInput.value;
-
-          if (!drId) return toast('يرجى اختيار سائق', 2200, 'error');
-          if (!st || !et) return toast('يرجى إدخال توقيت البداية والنهاية', 2200, 'error');
-
-          try {
-            const startIso = buildStart(currentDate, st);
-            const endIso = toMin(et) < toMin(st)
-              ? buildStart(addDays(currentDate, 1), et)
-              : buildStart(currentDate, et);
-
-            await createProposal({
-              occurrenceId,
-              missionId,
-              periodId: periodCode,
-              periodCode,
-              dueDriverId: drId,
-              plannedDriverId: drId,
-              startIso,
-              endIso,
-              rationale: 'تعيين مباشر من لوحة قيادة العمليات',
-              autoConfirm: true
-            });
-
-            toast('تم تعيين السائق وتحديد توقيته بنجاح!', 2200, 'success');
-            close();
-            refresh();
-          } catch (err) {
-            toast(err.message, 2500, 'error');
-          }
-        };
-      };
-
-      render();
-    }
-  });
+      <!-- 2. SHARED DRIVERS SQUAD -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid rgba(16,185,129,0.25)">
+          <span style="font-size:18px">🚌</span>
+          <span style="font-weight:900;font-size:14px;color:var(--text)">فرقة سواق النقل المشترك (${sharedDrivers.length} سائق)</span>
+        </div>
+        <div class="driver-roster-grid">
+          ${sharedDrivers.map(d => renderSingleDriverCard(d, allAssignments, missionMap, teamMap, isMgr)).join('')}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
-// ═══════════════════════════════════════
-// Edit Driver Timing Modal
-// ═══════════════════════════════════════
-function openEditDriverTimingModal({ assignmentId, driverName, currentStart, currentEnd }) {
-  requireWrite('assign.create');
+function renderSingleDriverCard(d, allAssignments, missionMap, teamMap, isMgr) {
+  const tm = teamMap.get(d.teamId);
+  const driverAsgs = allAssignments.filter(a =>
+    (Number(a.actualDriverId) === Number(d.id) || Number(a.plannedDriverId) === Number(d.id)) &&
+    a.status !== ASG_STATUS.CANCELLED
+  );
 
-  let startTime = currentStart || '17:00';
-  let endTime = currentEnd || '23:00';
-
-  sheet({
-    title: `⏱ تعديل توقيت السائق: ${driverName}`,
-    subtitle: 'تعديل ساعات بداية ونهاية هذا السائق في هذه المهمة',
-    builder: (body, close) => {
-      const render = () => {
-        const dur = calcDuration(startTime, endTime);
-        body.innerHTML = `
-          <div style="display:flex;flex-direction:column;gap:14px">
-            <div style="background:var(--surface-2);border-radius:10px;padding:12px;border:1px solid var(--line)">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div>
-                  <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px">توقيت البداية الجديد</label>
-                  <input type="time" id="edit_dr_start" class="input" value="${esc(startTime)}" style="width:100%">
-                </div>
-                <div>
-                  <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px">توقيت النهاية الجديد</label>
-                  <input type="time" id="edit_dr_end" class="input" value="${esc(endTime)}" style="width:100%">
-                </div>
-              </div>
-              <div style="margin-top:10px;font-size:12px;color:var(--text-3);text-align:center">
-                المدة المحسوبة: <b style="color:var(--text)">${dur}</b>
-              </div>
-            </div>
-
-            <div style="display:flex;gap:8px">
-              <button class="btn-primary" id="btnSaveTiming" style="flex:1">
-                حفظ التوقيت الجديد
-              </button>
-              <button class="btn-ghost" id="btnCancelTiming" style="flex:1">إلغاء</button>
-            </div>
+  return `
+    <div class="driver-roster-card" data-driver-name="${esc(d.name.toLowerCase())}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div class="driver-clickable" data-open-driver="${d.id}" style="display:flex;align-items:center;gap:8px;cursor:pointer" title="انقر لمعاينة ملف وحالة السائق المباشرة">
+          <div style="width:32px;height:32px;border-radius:8px;background:${d.category === DRIVER_CATEGORY.SHARED ? 'linear-gradient(135deg,#047857,#059669)' : 'linear-gradient(135deg,#1d4ed8,#2563eb)'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px">
+            ${esc(d.name.charAt(0))}
           </div>
-        `;
+          <div>
+            <div style="font-weight:800;font-size:13px;color:var(--text);display:flex;align-items:center;gap:4px">
+              <span>${esc(d.name)}</span>
+              <span style="font-size:11px;color:var(--text-3);opacity:0.8">👁️</span>
+            </div>
+            ${tm ? `<div style="font-size:10px;color:var(--text-3)">${esc(tm.name)}</div>` : ''}
+          </div>
+        </div>
 
-        const startInput = body.querySelector('#edit_dr_start');
-        const endInput = body.querySelector('#edit_dr_end');
+        <span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;background:${d.status === STATUS.AVAILABLE ? 'rgba(16,185,129,0.15);color:#10b981' : 'rgba(239,68,68,0.15);color:#ef4444'}">
+          ${STATUS_AR[d.status] || d.status}
+        </span>
+      </div>
 
-        startInput.onchange = () => { startTime = startInput.value; render(); };
-        endInput.onchange = () => { endTime = endInput.value; render(); };
+      <div style="border-top:1px solid var(--line);padding-top:8px">
+        <div style="font-size:11px;font-weight:800;color:var(--text-2);margin-bottom:4px">
+          مهام اليوم (${driverAsgs.length}):
+        </div>
 
-        body.querySelector('#btnCancelTiming').onclick = close;
-        body.querySelector('#btnSaveTiming').onclick = async () => {
-          const st = startInput.value;
-          const et = endInput.value;
+        ${driverAsgs.length === 0 ? `
+          <div style="font-size:11px;color:var(--text-3);padding:4px 0">
+            لا توجد مهام مسندة لهذا السائق في هذا اليوم
+          </div>
+        ` : driverAsgs.map(a => {
+          const m = missionMap.get(a.missionId);
+          const startStr = formatTimeHhmm(a.startIso, '00:00');
+          const endStr = formatTimeHhmm(a.endIso, '00:00');
+          const durObj = calcDuration(startStr, endStr);
+          const durText = durObj.humanText || '—';
+          const isExecuted = Boolean(a.executedAt);
 
-          if (!st || !et) return toast('يرجى إدخال التوقيت', 2200, 'error');
-
-          try {
-            const startIso = buildStart(currentDate, st);
-            const endIso = toMin(et) < toMin(st)
-              ? buildStart(addDays(currentDate, 1), et)
-              : buildStart(currentDate, et);
-
-            await updateAssignmentTiming(assignmentId, { startIso, endIso });
-
-            toast('تم تحديث توقيت السائق بنجاح!', 2200, 'success');
-            close();
-            refresh();
-          } catch (err) {
-            toast(err.message, 2500, 'error');
-          }
-        };
-      };
-
-      render();
-    }
-  });
+          return `
+            <div style="background:var(--surface-card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-weight:800;font-size:12px;color:var(--text)">${esc(m?.name || 'مهمة')}</div>
+                <div style="font-size:10px;color:var(--text-2);margin-top:2px">
+                  ⏰ من ${esc(startStr)} إلى ${esc(endStr)} (${durText})
+                </div>
+              </div>
+              <div>
+                ${isExecuted ? '<span style="font-size:10px;font-weight:800;background:rgba(16,185,129,0.2);color:#10b981;padding:2px 6px;border-radius:4px">✓ نُفّذت</span>' : '<span style="font-size:10px;color:var(--text-3)">مجدولة</span>'}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }

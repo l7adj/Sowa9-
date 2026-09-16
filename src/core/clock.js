@@ -102,3 +102,57 @@ export function calcDuration(startHhmm, endHhmm) {
   return { durationMinutes, dayOffset, humanText };
 }
 
+export function toIso(val) {
+  if (!val) return null;
+  if (typeof val === 'string') return val;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val.toISOString();
+  try {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? String(val) : d.toISOString();
+  } catch {
+    return String(val);
+  }
+}
+
+export function formatTimeHhmm(val, fallback = '00:00') {
+  if (!val) return fallback;
+  if (typeof val === 'string') {
+    if (val.includes('T')) {
+      const parts = val.split('T')[1];
+      return parts ? parts.slice(0, 5) : fallback;
+    }
+    if (val.length === 5 && val.includes(':')) {
+      return val;
+    }
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toTimeString().slice(0, 5);
+    }
+    return val.slice(0, 5);
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toTimeString().slice(0, 5);
+  }
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toTimeString().slice(0, 5);
+  } catch {}
+  return fallback;
+}
+
+export function formatDateIso(val, fallback = '') {
+  if (!val) return fallback;
+  if (typeof val === 'string') {
+    if (val.includes('T')) return val.split('T')[0];
+    if (val.length === 10 && val.includes('-')) return val;
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return isoDate(d);
+    return val.slice(0, 10);
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return isoDate(val);
+  }
+  return fallback;
+}
+
+

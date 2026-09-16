@@ -328,7 +328,7 @@ export async function openMissionEditorModal(missionId = null) {
               <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;font-size:12px">
                 <span style="color:var(--text-3)">المدة المحسوبة تلقائياً:</span>
                 <span class="tag info" id="lblDuration" style="font-weight:800;font-size:12px">
-                  ${fmtDurShort(computedDur)} ${toMin(currentEndTime) < toMin(currentStartTime) ? '(تنتهي في اليوم التالي)' : ''}
+                  ${computedDur.humanText || '—'} ${toMin(currentEndTime) < toMin(currentStartTime) ? '(تنتهي في اليوم التالي)' : ''}
                 </span>
               </div>
             </div>
@@ -388,7 +388,7 @@ export async function openMissionEditorModal(missionId = null) {
                           </div>
                         </div>
                         <div style="margin-top:6px;font-size:11px;color:var(--text-3);display:flex;justify-content:space-between">
-                          <span>المدة: <b>${fmtDurShort(pDur)}</b></span>
+                          <span>المدة: <b>${pDur.humanText || '—'}</b></span>
                           <span style="font-size:10px">${p.dayOffset > 0 ? '+1 يوم' : 'نفس اليوم'}</span>
                         </div>
                       </div>
@@ -427,7 +427,7 @@ export async function openMissionEditorModal(missionId = null) {
                 name: box.querySelector('.p-name')?.value.trim() || `وردية ${idx + 1}`,
                 startTime: pStart,
                 endTime: pEnd,
-                durationMinutes: dur,
+                durationMinutes: dur.minutes,
                 driverCategory: box.querySelector('.p-cat')?.value || currentCategory,
                 driversNeeded: Number(box.querySelector('.p-drivers')?.value) || 1,
                 track: currentPeriods[idx]?.track || null,
@@ -471,7 +471,7 @@ export async function openMissionEditorModal(missionId = null) {
           const dur = calcDuration(s, e);
           const lbl = body.querySelector('#lblDuration');
           if (lbl) {
-            lbl.textContent = `${fmtDurShort(dur)} ${toMin(e) < toMin(s) ? '(تنتهي في اليوم التالي)' : ''}`;
+            lbl.textContent = `${dur.humanText || '—'} ${toMin(e) < toMin(s) ? '(تنتهي في اليوم التالي)' : ''}`;
           }
         };
         body.querySelector('#m_start')?.addEventListener('input', syncDuration);
@@ -514,7 +514,7 @@ export async function openMissionEditorModal(missionId = null) {
           const code = body.querySelector('#m_code').value.trim();
           const startTime = currentStartTime;
           const endTime = currentEndTime;
-          const durationMinutes = calcDuration(startTime, endTime);
+          const durationMinutes = calcDuration(startTime, endTime).minutes;
           const locationType = m.locationType || 'outdoor';
           const teamId = Number(body.querySelector('#m_team').value) || 1;
           const notes = body.querySelector('#m_notes').value.trim();
@@ -595,7 +595,7 @@ export async function openCreateOccurrenceModal(preselectedMissionId = null) {
         const currentMission = missions.find(m => m.id === selectedMissionId) || missions[0];
         const periods = getMissionPeriods(currentMission);
         const missionCat = currentMission.driverCategory || DRIVER_CATEGORY.LIGHT;
-        const totalDur = calcDuration(currentMission.startTime || '17:00', currentMission.endTime || '23:00');
+        const totalDur = calcDuration(currentMission.startTime || '17:00', currentMission.endTime || '23:00').humanText || '—';
 
         // Pre-fetch fair turn suggestions for each period
         const periodSuggestions = [];
@@ -850,10 +850,10 @@ export async function openCreateOccurrenceModal(preselectedMissionId = null) {
                 const drEnd = slot.querySelector('.slot-dr-end')?.value || currentMission.endTime;
 
                 if (drId) {
-                  const startIso = buildStart(date, drStart);
-                  const endIso = toMin(drEnd) < toMin(drStart)
+                  const startIso = buildStart(date, drStart).toISOString();
+                  const endIso = (toMin(drEnd) < toMin(drStart)
                     ? buildStart(addDays(date, 1), drEnd)
-                    : buildStart(date, drEnd);
+                    : buildStart(date, drEnd)).toISOString();
 
                   await createProposal({
                     occurrenceId: occId,

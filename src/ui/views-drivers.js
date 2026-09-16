@@ -1,7 +1,8 @@
 import { listDrivers, createDriver, updateDriver, setDriverStatus, STATUS, STATUS_AR, STATUS_COLOR, DRIVER_CATEGORY, DRIVER_CATEGORY_AR } from '../domain/drivers.js';
 import { listTeams } from '../domain/teams.js';
+import { listAllAssignments } from '../domain/assignments.js';
 import { all, get, put } from '../core/db.js';
-import { nowIso, todayIso, toMin, fromMinSafe, fmtDurShort, relativeDay, humanDate } from '../core/clock.js';
+import { nowIso, todayIso, toMin, fromMinSafe, fmtDurShort, relativeDay, humanDate, formatTimeHhmm, formatDateIso } from '../core/clock.js';
 import { isManager, requireWrite } from '../core/auth.js';
 import { sheet, toast, refresh, esc, attachRipple } from './helpers.js';
 import { listUnresolved, resolveMissed } from '../domain/missed-turns.js';
@@ -13,7 +14,7 @@ export async function renderDriversPage(main) {
   const [drivers, teams, assignments, occurrences, missions, missedTurns, loans] = await Promise.all([
     listDrivers(),
     listTeams(),
-    all('assignments'),
+    listAllAssignments(),
     all('occurrences'),
     all('missions'),
     listUnresolved(),
@@ -270,7 +271,7 @@ function renderDriverFullCard(item, isMgr) {
               <span>🟢 يعمل الآن في:</span>
               <span>${esc(currentMission?.name || 'مهمة')}</span>
               ${currentActiveAsg.periodName ? `<span>— ${esc(currentActiveAsg.periodName)}</span>` : ''}
-              <span style="color:var(--text-3);font-size:11px;font-weight:normal">(حتى ${esc(currentActiveAsg.endIso ? currentActiveAsg.endIso.slice(11, 16) : '')})</span>
+              <span style="color:var(--text-3);font-size:11px;font-weight:normal">(حتى ${esc(currentActiveAsg.endIso ? formatTimeHhmm(currentActiveAsg.endIso) : '')})</span>
             </div>
           ` : `
             <div style="color:var(--text-3)">
@@ -285,7 +286,7 @@ function renderDriverFullCard(item, isMgr) {
             <div style="color:var(--text);font-size:11px">
               ⏳ <b>المهمة القادمة:</b> ${esc(nextMission?.name || 'مهمة')}
               ${nextAsg.periodName ? `— ${esc(nextAsg.periodName)}` : ''}
-              في <b>${esc(nextAsg.startIso ? nextAsg.startIso.slice(0, 10) : '')} ${esc(nextAsg.startIso ? nextAsg.startIso.slice(11, 16) : '')}</b>
+              في <b>${esc(formatDateIso(nextAsg.startIso))} ${esc(formatTimeHhmm(nextAsg.startIso))}</b>
             </div>
           ` : `
             <div style="color:var(--text-3);font-size:11px">
@@ -299,7 +300,7 @@ function renderDriverFullCard(item, isMgr) {
       <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:12px;background:var(--surface-card);padding:6px 8px;border:1px solid var(--line);border-radius:6px;flex-wrap:wrap;gap:6px">
         <div>
           <span>آخر مهمة: </span>
-          <b>${lastAsg ? `${esc(lastMission?.name || 'مهمة')} (${relativeDay(lastAsg.endIso?.slice(0, 10))})` : 'لم ينفذ مهام سابقة'}</b>
+          <b>${lastAsg ? `${esc(lastMission?.name || 'مهمة')} (${relativeDay(formatDateIso(lastAsg.endIso))})` : 'لم ينفذ مهام سابقة'}</b>
           ${restMinutes !== null ? ` · مدة الراحة: <b>${fmtDurShort(restMinutes)}</b>` : ''}
         </div>
         <div>

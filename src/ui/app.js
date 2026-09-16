@@ -22,34 +22,65 @@ let visibleTabs = [];
 
 export function boot(root) {
   rootEl = root;
+  initTheme();
   const s = getSession();
   if (!s) return renderLogin();
   renderShell();
 }
 
+function initTheme() {
+  const saved = localStorage.getItem('sowa9_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+}
+
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('sowa9_theme', next);
+  const icon = document.querySelector('#themeToggleBtn');
+  if (icon) icon.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+
 function renderLogin() {
+  const curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
   rootEl.innerHTML = `
     <div class="login-screen">
-      <div class="logo-big">S9</div>
-      <h1>Sowa9 — نظام إدارة مهام السواق</h1>
-      <p class="lead">العدالة التامة في توزيع المهام وحساب الدور والراحة</p>
-      <button class="btn-primary" data-role="LEADER"
-        style="max-width:340px;padding:16px;text-align:right">
-        <div style="font-weight:900;font-size:15px">قائد فرقة السواق</div>
-        <div style="font-size:11px;opacity:.8;margin-top:3px">صلاحيات كاملة في التعيين وإدارة الكتالوج</div>
-      </button>
-      <button class="btn-ghost" data-role="DEPUTY"
-        style="max-width:340px;padding:16px;text-align:right">
-        <div style="font-weight:900;font-size:15px">نائب قائد فرقة السواق</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:3px">توزيع المهام وإدارة السواق اليومية</div>
-      </button>
-      <button class="btn-ghost" data-role="DRIVER"
-        style="max-width:340px;padding:16px;text-align:right">
-        <div style="font-weight:900;font-size:15px">السواق</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:3px">عرض المهام والجدول فقط دون تعديل</div>
-      </button>
+      <div style="position:absolute;top:16px;left:16px">
+        <button id="themeToggleBtnLogin" class="btn-ghost" style="width:auto;padding:6px 12px;font-size:13px;border-radius:10px">
+          ${curTheme === 'dark' ? '☀️ وضع النهار' : '🌙 الوضع الليلي'}
+        </button>
+      </div>
+      <div class="logo-big" style="background:linear-gradient(135deg,#1e3a8a,#2563eb);box-shadow:0 8px 24px rgba(37,99,235,0.3)">S9</div>
+      <h1 style="font-weight:900;letter-spacing:-0.5px">Sowa9 — قيادة فرقة السواق</h1>
+      <p class="lead" style="max-width:380px;line-height:1.6">النظام التشغيلي الميداني لإدارة المهام وتوزيع السواق بأقل عدد من النقرات</p>
+      
+      <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:360px">
+        <button class="btn-primary" data-role="LEADER"
+          style="padding:16px 20px;text-align:right;background:linear-gradient(135deg,#1d4ed8,#2563eb);box-shadow:0 4px 14px rgba(37,99,235,0.25)">
+          <div style="font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:space-between">
+            <span>🎖️ قائد فرقة السواق</span>
+            <span style="font-size:11px;background:rgba(255,255,255,0.2);padding:2px 8px;border-radius:6px">تحكم كامل</span>
+          </div>
+          <div style="font-size:11px;opacity:.9;margin-top:4px">توجيه العمليات، وتعيين السواق بضغطة واحدة</div>
+        </button>
+        <button class="btn-ghost" data-role="DEPUTY"
+          style="padding:14px 20px;text-align:right">
+          <div style="font-weight:900;font-size:14px">⭐ نائب قائد فرقة السواق</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:3px">توزيع المهام ومتابعة الجاهزية الميدانية</div>
+        </button>
+        <button class="btn-ghost" data-role="DRIVER"
+          style="padding:14px 20px;text-align:right">
+          <div style="font-weight:900;font-size:14px">🚗 السواق (عرض المهام الميدانية)</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:3px">استعراض المهام المسندة والتوقيت بدقة</div>
+        </button>
+      </div>
     </div>
   `;
+  rootEl.querySelector('#themeToggleBtnLogin').onclick = () => {
+    toggleTheme();
+    renderLogin();
+  };
   rootEl.querySelectorAll('button[data-role]').forEach(b => {
     b.onclick = () => {
       setSession({ role: b.dataset.role, driverId: null, at: new Date().toISOString() });
@@ -60,17 +91,27 @@ function renderLogin() {
 
 function renderShell() {
   const sess = getSession();
+  const curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
   visibleTabs = TABS.filter(t => !t.leaderOnly || isLeader());
   if (!visibleTabs.find(t => t.id === currentTab)) currentTab = 'home';
 
   rootEl.innerHTML = `
     <header class="topbar">
       <h1>
-        <span class="logo">S9</span>
-        <span>Sowa9</span>
+        <span class="logo" style="background:linear-gradient(135deg,#1d4ed8,#2563eb)">S9</span>
+        <span style="font-weight:900">Sowa9</span>
+        <span class="topbar-subtitle" style="font-size:11px;font-weight:700;color:var(--text-3);margin-right:4px">| قيادة العمليات</span>
       </h1>
-      <span class="role-tag">${ROLE_LABEL[sess.role] || sess.role}</span>
-      <button id="outBtn" title="تسجيل الخروج">⎋</button>
+      <div class="topbar-actions" style="display:flex;align-items:center;gap:6px">
+        <span class="role-tag topbar-role-tag" style="display:flex;align-items:center;gap:4px">
+          <span style="color:#10b981">●</span>
+          <span>${ROLE_LABEL[sess.role] || sess.role}</span>
+        </span>
+        <button id="themeToggleBtn" title="تبديل مظهر العرض" style="font-size:14px;background:var(--surface-2)">
+          ${curTheme === 'dark' ? '☀️' : '🌙'}
+        </button>
+        <button id="outBtn" title="تسجيل الخروج" style="font-size:14px;background:var(--surface-2)">⎋</button>
+      </div>
     </header>
     <div class="pages-stack" id="pagesStack"></div>
     <nav class="bnav" id="bnav">
@@ -83,6 +124,8 @@ function renderShell() {
       `).join('')}
     </nav>
   `;
+
+  rootEl.querySelector('#themeToggleBtn').onclick = toggleTheme;
 
   rootEl.querySelector('#outBtn').onclick = () => {
     if (window.confirm('هل تريد تسجيل الخروج؟')) { clearSession(); boot(rootEl); }

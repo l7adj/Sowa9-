@@ -1,5 +1,5 @@
 import { get, put, byIdx, all } from '../core/db.js';
-import { nowIso } from '../core/clock.js';
+import { nowIso, toIso } from '../core/clock.js';
 import { audit } from '../core/audit.js';
 import { requireWrite } from '../core/auth.js';
 
@@ -16,16 +16,30 @@ export const DRIVER_SOURCE = {
   BORROWED: 'BORROWED'    // مستعار من فريق آخر
 };
 
+function normalizeAssignment(a) {
+  if (!a) return a;
+  if (a.startIso && typeof a.startIso !== 'string') {
+    a.startIso = toIso(a.startIso);
+  }
+  if (a.endIso && typeof a.endIso !== 'string') {
+    a.endIso = toIso(a.endIso);
+  }
+  return a;
+}
+
 export async function listByOccurrence(occurrenceId) {
-  return byIdx('assignments', 'occurrenceId', Number(occurrenceId));
+  const list = await byIdx('assignments', 'occurrenceId', Number(occurrenceId));
+  return list.map(normalizeAssignment);
 }
 
 export async function listAllAssignments() {
-  return all('assignments');
+  const list = await all('assignments');
+  return list.map(normalizeAssignment);
 }
 
 export async function getAssignment(id) {
-  return get('assignments', Number(id));
+  const a = await get('assignments', Number(id));
+  return normalizeAssignment(a);
 }
 
 export async function createAssignment({
@@ -68,8 +82,8 @@ export async function createAssignment({
     source: source || DRIVER_SOURCE.TEAM,
     loanId: loanId ? Number(loanId) : null,
     status,
-    startIso,
-    endIso,
+    startIso: toIso(startIso),
+    endIso: toIso(endIso),
     rationale: rationale || null,
     replacementReason: replacementReason || null,
     replacedAt: isOverride ? nowIso() : null,
@@ -127,8 +141,8 @@ export async function updateAssignmentTiming(assignmentId, { startIso, endIso, d
 
   const next = {
     ...a,
-    startIso: startIso || a.startIso,
-    endIso: endIso || a.endIso,
+    startIso: toIso(startIso || a.startIso),
+    endIso: toIso(endIso || a.endIso),
     ...(driverId ? {
       plannedDriverId: Number(driverId),
       actualDriverId: a.actualDriverId ? Number(driverId) : a.actualDriverId,

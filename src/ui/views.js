@@ -601,7 +601,7 @@ async function openMissionPicker() {
           : m.locationType === 'indoor' ? 'var(--purple)' : 'var(--accent)';
         return `
           <div class="dp-row ${isUsed ? 'blocked' : ''}" data-mid="${m.id}">
-            <div class="av" style="background:${color}">${esc(m.startTime.slice(0, 2))}</div>
+            <div class="av" style="background:${color}">${esc((m.startTime || '00').slice(0, 2))}</div>
             <div class="body">
               <div class="n">${esc(m.name)}${isMulti ? ' 🔄' : ''}</div>
               <div class="tags">
@@ -1952,7 +1952,7 @@ export async function renderSettingsPage(main) {
           return `
             <div class="driver-profile-card" data-mid="${m.id}">
               <div class="dpc-head">
-                <div class="av-lg" style="background:${color}">${esc(m.startTime.slice(0, 2))}</div>
+                <div class="av-lg" style="background:${color}">${esc((m.startTime || '00').slice(0, 2))}</div>
                 <div class="dpc-info">
                   <div class="dpc-name">
                     ${esc(m.name)}

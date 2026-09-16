@@ -138,6 +138,7 @@ export async function createMission(m) {
     startTime: m.startTime,
     durationMinutes: m.durationMinutes,
     driversNeeded: totalDrivers,
+    driverCategory: m.driverCategory || 'LIGHT',
     locationType: m.locationType ?? 'outdoor',
     teamId: m.teamId ? Number(m.teamId) : null,
     periods: periods,
