@@ -129,7 +129,7 @@ export async function renderLoansPage(main) {
               <!-- Loan Details Box -->
               <div style="background:var(--bg-base);border-radius:8px;padding:8px 10px;margin:10px 0 6px 0;font-size:11px;display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:6px">
                 <div><span style="color:var(--text-3)">المهمة: </span><b>${esc(mis?.name || 'مهمة عامة')}</b></div>
-                <div><span style="color:var(--text-3)">الفترة: </span><b>${esc(l.timeSlot || 'كامل الوردية')}</b></div>
+                <div><span style="color:var(--text-3)">الفترة: </span><b>${esc(l.timeSlot || 'كامل فترة المهمة')}</b></div>
                 <div><span style="color:var(--text-3)">السبب: </span><b>${esc(l.reason)}</b></div>
                 <div><span style="color:var(--text-3)">العدالة: </span><b style="color:var(--ok)">${l.fairnessImpact ? 'محسوبة للسائق' : 'مستثناة'}</b></div>
               </div>
@@ -256,7 +256,7 @@ export async function openNewLoanModal(prefill = {}) {
           </div>
           <div class="form-field">
             <label>سبب الإعارة (إلزامي للتوثيق)</label>
-            <input id="reason" placeholder="مثال: نقص سائقين في الوردية" value="نقص سائقين في الوردية">
+            <input id="reason" placeholder="مثال: نقص سائقين في المهمة" value="نقص سائقين في المهمة">
           </div>
         </div>
 

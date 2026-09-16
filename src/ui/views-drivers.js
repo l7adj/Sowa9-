@@ -1,10 +1,12 @@
-import { listDrivers, createDriver, updateDriver, setDriverStatus, STATUS, STATUS_AR, STATUS_COLOR } from '../domain/drivers.js';
+import { listDrivers, createDriver, updateDriver, setDriverStatus, STATUS, STATUS_AR, STATUS_COLOR, DRIVER_CATEGORY, DRIVER_CATEGORY_AR } from '../domain/drivers.js';
 import { listTeams } from '../domain/teams.js';
 import { all, get, put } from '../core/db.js';
 import { nowIso, todayIso, toMin, fromMinSafe, fmtDurShort, relativeDay, humanDate } from '../core/clock.js';
 import { isManager, requireWrite } from '../core/auth.js';
 import { sheet, toast, refresh, esc, attachRipple } from './helpers.js';
 import { listUnresolved, resolveMissed } from '../domain/missed-turns.js';
+
+let activeCategoryFilter = 'ALL';
 
 export async function renderDriversPage(main) {
   const isMgr = isManager();
@@ -108,6 +110,13 @@ export async function renderDriversPage(main) {
     };
   });
 
+  // Filter by category
+  const filteredDriverData = driverData.filter(item => {
+    if (activeCategoryFilter === 'ALL') return true;
+    const cat = item.driver.category || DRIVER_CATEGORY.LIGHT;
+    return cat === activeCategoryFilter || cat === DRIVER_CATEGORY.ALL;
+  });
+
   main.innerHTML = `
     <div class="datebar" style="justify-content:space-between">
       <div style="display:flex;align-items:center;gap:8px">
@@ -126,18 +135,38 @@ export async function renderDriversPage(main) {
 
     ${isMgr ? '' : '<div class="readonly-banner">📖 عرض فقط — لا يمكنك تعديل بيانات أو حالات السواق</div>'}
 
+    <!-- Driver Category Filters -->
+    <div class="filter-chips-row" style="margin-bottom:12px">
+      <button type="button" class="filter-pill ${activeCategoryFilter === 'ALL' ? 'active' : ''}" data-cat-filter="ALL">
+        👥 جميع السواق (${drivers.length})
+      </button>
+      <button type="button" class="filter-pill ${activeCategoryFilter === DRIVER_CATEGORY.LIGHT ? 'active' : ''}" data-cat-filter="${DRIVER_CATEGORY.LIGHT}">
+        🚗 سواق وزن خفيف (${drivers.filter(d => (d.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.LIGHT).length})
+      </button>
+      <button type="button" class="filter-pill ${activeCategoryFilter === DRIVER_CATEGORY.SHARED ? 'active' : ''}" data-cat-filter="${DRIVER_CATEGORY.SHARED}">
+        🚌 سواق نقل مشترك (${drivers.filter(d => d.category === DRIVER_CATEGORY.SHARED).length})
+      </button>
+    </div>
+
     <div class="section" id="driversListSection">
       <div class="section-body" style="padding-top:4px">
-        ${driverData.length === 0 ? `
+        ${filteredDriverData.length === 0 ? `
           <div class="empty-block">
             <div class="ic">👤</div>
-            <h3>لا يوجد سواق مسجلين بعد</h3>
+            <h3>لا يوجد سواق مطابقين للتصنيف المحدد</h3>
             ${isMgr ? '<p>اضغط "+ إضافة سائق جديد" للبدء</p>' : ''}
           </div>
-        ` : driverData.map(item => renderDriverFullCard(item, isMgr)).join('')}
+        ` : filteredDriverData.map(item => renderDriverFullCard(item, isMgr)).join('')}
       </div>
     </div>
   `;
+
+  main.querySelectorAll('[data-cat-filter]').forEach(btn => {
+    btn.onclick = () => {
+      activeCategoryFilter = btn.dataset.catFilter;
+      renderDriversPage(main);
+    };
+  });
 
   // Attach event handlers
   main.querySelector('#btnNewDriver')?.addEventListener('click', () => openDriverEditorModal());
@@ -199,6 +228,9 @@ function renderDriverFullCard(item, isMgr) {
           <div>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <h3 style="margin:0;font-size:15px;font-weight:800;color:var(--text)">${esc(d.name)}</h3>
+              <span class="tag ${(d.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.SHARED ? 'cat-shared' : 'cat-light'}" style="font-size:10px">
+                ${(d.category || DRIVER_CATEGORY.LIGHT) === DRIVER_CATEGORY.SHARED ? '🚌 نقل مشترك' : (d.category === DRIVER_CATEGORY.ALL ? '🌟 شامل' : '🚗 وزن خفيف')}
+              </span>
               ${team ? `
                 <span class="tag" style="background:${esc(team.color || '#3b82f6')}22;color:${esc(team.color || '#3b82f6')};font-size:11px;font-weight:700">
                   ${esc(team.name)}
@@ -345,75 +377,113 @@ export async function openDriverEditorModal(driverId = null) {
   const d = existingDriver || {
     name: '',
     phone: '',
+    category: DRIVER_CATEGORY.LIGHT,
     teamId: teams[0]?.id || 1,
     status: 'AVAILABLE'
   };
+
+  let selectedCat = d.category || DRIVER_CATEGORY.LIGHT;
 
   sheet({
     title: driverId ? 'تعديل بيانات السائق' : 'إضافة سائق جديد',
     subtitle: driverId ? `تعديل السائق: ${d.name}` : 'تسجيل سائق جديد في فرقة السواق',
     builder: (body, close) => {
-      body.innerHTML = `
-        <div style="display:flex;flex-direction:column;gap:12px">
-          <div>
-            <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">اسم السائق الكامل <span style="color:red">*</span></label>
-            <input id="dr_name" class="input" value="${esc(d.name)}" placeholder="مثال: أحمد محمد" style="width:100%">
+      const renderModal = () => {
+        body.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">اسم السائق الكامل <span style="color:red">*</span></label>
+              <input id="dr_name" class="input" value="${esc(d.name)}" placeholder="مثال: أحمد محمد" style="width:100%">
+            </div>
+
+            <!-- Driver Category Selection -->
+            <div>
+              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:6px">صنف السائق (نوع الرخصة والمركبات)</label>
+              <div class="segment-group" id="driverCatSegment">
+                <button type="button" class="segment-btn ${selectedCat === DRIVER_CATEGORY.LIGHT ? 'active accent-light' : ''}" data-cat="${DRIVER_CATEGORY.LIGHT}">
+                  <span>🚗</span>
+                  <span>وزن خفيف</span>
+                </button>
+                <button type="button" class="segment-btn ${selectedCat === DRIVER_CATEGORY.SHARED ? 'active accent-shared' : ''}" data-cat="${DRIVER_CATEGORY.SHARED}">
+                  <span>🚌</span>
+                  <span>نقل مشترك</span>
+                </button>
+                <button type="button" class="segment-btn ${selectedCat === DRIVER_CATEGORY.ALL ? 'active' : ''}" data-cat="${DRIVER_CATEGORY.ALL}">
+                  <span>🌟</span>
+                  <span>شامل</span>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">رقم الهاتف (للتواصل)</label>
+              <input id="dr_phone" class="input" value="${esc(d.phone || '')}" placeholder="0550112233" style="width:100%">
+            </div>
+
+            <div>
+              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">الفرقة / الفريق التابع له</label>
+              <select id="dr_team" class="input" style="width:100%">
+                ${teams.map(t => `<option value="${t.id}" ${Number(d.teamId) === Number(t.id) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+              </select>
+            </div>
+
+            <div>
+              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">الحالة التشغيلية</label>
+              <select id="dr_status" class="input" style="width:100%">
+                <option value="AVAILABLE" ${d.status === 'AVAILABLE' ? 'selected' : ''}>🟢 متاح للعمل</option>
+                <option value="VACATION" ${d.status === 'VACATION' ? 'selected' : ''}>🏖️ في عطلة / إجازة</option>
+                <option value="SICK" ${d.status === 'SICK' ? 'selected' : ''}>🩺 عجز طبي / مريض</option>
+                <option value="UNAVAILABLE" ${d.status === 'UNAVAILABLE' ? 'selected' : ''}>⚪ غير متاح مؤقتاً</option>
+              </select>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn-primary" id="btnSaveDriver" style="flex:1">
+                ${driverId ? 'حفظ التعديلات' : 'إضافة السائق'}
+              </button>
+              <button class="btn-ghost" id="btnCancelDriver" style="flex:1">إلغاء</button>
+            </div>
           </div>
+        `;
 
-          <div>
-            <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">رقم الهاتف (للتواصل)</label>
-            <input id="dr_phone" class="input" value="${esc(d.phone || '')}" placeholder="0550112233" style="width:100%">
-          </div>
+        body.querySelectorAll('#driverCatSegment .segment-btn').forEach(btn => {
+          btn.onclick = () => {
+            selectedCat = btn.dataset.cat;
+            d.name = body.querySelector('#dr_name')?.value || d.name;
+            d.phone = body.querySelector('#dr_phone')?.value || d.phone;
+            d.teamId = Number(body.querySelector('#dr_team')?.value) || d.teamId;
+            d.status = body.querySelector('#dr_status')?.value || d.status;
+            renderModal();
+          };
+        });
 
-          <div>
-            <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">الفرقة / الفريق التابع له</label>
-            <select id="dr_team" class="input" style="width:100%">
-              ${teams.map(t => `<option value="${t.id}" ${Number(d.teamId) === Number(t.id) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
-            </select>
-          </div>
+        body.querySelector('#btnCancelDriver').onclick = close;
+        body.querySelector('#btnSaveDriver').onclick = async () => {
+          const name = body.querySelector('#dr_name').value.trim();
+          const phone = body.querySelector('#dr_phone').value.trim();
+          const teamId = Number(body.querySelector('#dr_team').value) || 1;
+          const status = body.querySelector('#dr_status').value;
+          const category = selectedCat;
 
-          <div>
-            <label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">الحالة التشغيلية</label>
-            <select id="dr_status" class="input" style="width:100%">
-              <option value="AVAILABLE" ${d.status === 'AVAILABLE' ? 'selected' : ''}>🟢 متاح للعمل</option>
-              <option value="VACATION" ${d.status === 'VACATION' ? 'selected' : ''}>🏖️ في عطلة / إجازة</option>
-              <option value="SICK" ${d.status === 'SICK' ? 'selected' : ''}>🩺 عجز طبي / مريض</option>
-              <option value="UNAVAILABLE" ${d.status === 'UNAVAILABLE' ? 'selected' : ''}>⚪ غير متاح مؤقتاً</option>
-            </select>
-          </div>
+          if (!name) return toast('اسم السائق مطلوب', 2200, 'error');
 
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn-primary" id="btnSaveDriver" style="flex:1">
-              ${driverId ? 'حفظ التعديلات' : 'إضافة السائق'}
-            </button>
-            <button class="btn-ghost" id="btnCancelDriver" style="flex:1">إلغاء</button>
-          </div>
-        </div>
-      `;
-
-      body.querySelector('#btnCancelDriver').onclick = close;
-      body.querySelector('#btnSaveDriver').onclick = async () => {
-        const name = body.querySelector('#dr_name').value.trim();
-        const phone = body.querySelector('#dr_phone').value.trim();
-        const teamId = Number(body.querySelector('#dr_team').value) || 1;
-        const status = body.querySelector('#dr_status').value;
-
-        if (!name) return toast('اسم السائق مطلوب', 2200, 'error');
-
-        try {
-          if (driverId) {
-            await updateDriver(driverId, { name, phone, teamId, status });
-            toast('تم تحديث بيانات السائق بنجاح', 2200, 'success');
-          } else {
-            await createDriver({ name, phone, teamId, status });
-            toast(`تمت إضافة ${esc(name)} بنجاح`, 2200, 'success');
+          try {
+            if (driverId) {
+              await updateDriver(driverId, { name, phone, teamId, status, category });
+              toast('تم تحديث بيانات السائق بنجاح', 2200, 'success');
+            } else {
+              await createDriver({ name, phone, teamId, status, category });
+              toast(`تمت إضافة ${esc(name)} بنجاح`, 2200, 'success');
+            }
+            close();
+            refresh();
+          } catch (e) {
+            toast(e.message, 2500, 'error');
           }
-          close();
-          refresh();
-        } catch (e) {
-          toast(e.message, 2500, 'error');
-        }
+        };
       };
+
+      renderModal();
     }
   });
 }

@@ -1087,3 +1087,208 @@
   border-color: rgba(34, 197, 94, 0.3);
 }
 
+/* SMART SEGMENTED SELECTORS */
+.segment-group {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px;
+  gap: 4px;
+  user-select: none;
+}
+.segment-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.18s var(--ease-spring), color 0.18s var(--ease-spring), transform 0.12s;
+  white-space: nowrap;
+}
+.segment-btn:hover {
+  color: var(--text);
+}
+.segment-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.segment-btn.active.accent-shared {
+  background: #3b82f6;
+  color: #fff;
+}
+.segment-btn.active.accent-light {
+  background: #10b981;
+  color: #fff;
+}
+
+/* SMOOTH DAY CAROUSEL STRIP */
+.day-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.day-strip::-webkit-scrollbar {
+  display: none;
+}
+.day-chip {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-card);
+  color: var(--text-2);
+  cursor: pointer;
+  min-width: 68px;
+  transition: transform 0.15s var(--ease-spring), background 0.15s, border-color 0.15s;
+}
+.day-chip:hover {
+  background: var(--surface-2);
+}
+.day-chip:active {
+  transform: scale(0.96);
+}
+.day-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+}
+.day-chip.is-today-marker {
+  position: relative;
+}
+.day-chip.is-today-marker::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+}
+.day-chip.active.is-today-marker::after {
+  background: #fff;
+}
+
+/* SMART FILTER CHIPS */
+.filter-chips-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+}
+.filter-chips-row::-webkit-scrollbar {
+  display: none;
+}
+.filter-pill {
+  flex: 0 0 auto;
+  padding: 6px 13px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s;
+}
+.filter-pill:hover {
+  color: var(--text);
+}
+.filter-pill.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* DRIVER CATEGORY TAGS */
+.tag.cat-light {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  font-weight: 700;
+}
+.tag.cat-shared {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  font-weight: 700;
+}
+.tag.cat-all {
+  background: rgba(168, 85, 247, 0.12);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  font-weight: 700;
+}
+
+/* TIMELINE TRACK */
+.timeline-card {
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.timeline-track-bar {
+  position: relative;
+  height: 28px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 8px;
+  display: flex;
+}
+.timeline-hour-markers {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 4px;
+  padding: 0 4px;
+  font-family: monospace;
+}
+.timeline-slot {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.15s;
+}
+.timeline-slot:hover {
+  transform: scaleY(1.1);
+  z-index: 5;
+}
+
+

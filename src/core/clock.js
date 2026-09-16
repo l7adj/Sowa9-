@@ -84,3 +84,21 @@ export function relativeDay(iso) {
   if (diff < 0 && diff > -30) return `بعد ${-diff} يوم`;
   return humanDate(iso);
 }
+
+export function calcDuration(startHhmm, endHhmm) {
+  if (!startHhmm || !endHhmm) return { durationMinutes: 0, dayOffset: 0, humanText: '—' };
+  const s = toMin(startHhmm);
+  let e = toMin(endHhmm);
+  let dayOffset = 0;
+  if (e < s) {
+    e += 1440;
+    dayOffset = 1;
+  } else if (e === s) {
+    e += 1440;
+    dayOffset = 1;
+  }
+  const durationMinutes = e - s;
+  const humanText = `${fmtDur(durationMinutes)}${dayOffset > 0 ? ' (حتى اليوم التالي)' : ''}`;
+  return { durationMinutes, dayOffset, humanText };
+}
+

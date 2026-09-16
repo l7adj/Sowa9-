@@ -18,15 +18,37 @@ export const STATUS_COLOR = {
   UNAVAILABLE:'warn', ABSENT:'warn', DISABLED:'muted'
 };
 
+export const DRIVER_CATEGORY = {
+  LIGHT: 'LIGHT',     // وزن خفيف 🚗
+  SHARED: 'SHARED',   // نقل مشترك 🚌
+  ALL: 'ALL'         // شامل
+};
+
+export const DRIVER_CATEGORY_AR = {
+  LIGHT: 'وزن خفيف 🚗',
+  SHARED: 'نقل مشترك 🚌',
+  ALL: 'شامل (خفيف ونقل مشترك)'
+};
+
 export async function listDrivers(includeDisabled = false) {
   let r = await all('drivers');
   if (!includeDisabled) r = r.filter(d => d.status !== STATUS.DISABLED);
-  return r.sort((a, b) => a.id - b.id);
+  return r.map(d => ({
+    ...d,
+    category: d.category || DRIVER_CATEGORY.LIGHT
+  })).sort((a, b) => a.id - b.id);
 }
 
-export async function getDriver(id) { return get('drivers', id); }
+export async function getDriver(id) {
+  const d = await get('drivers', id);
+  if (!d) return null;
+  return {
+    ...d,
+    category: d.category || DRIVER_CATEGORY.LIGHT
+  };
+}
 
-export async function createDriver({ name, status = STATUS.AVAILABLE, notes = '', teamId = 1, phone = '' }) {
+export async function createDriver({ name, status = STATUS.AVAILABLE, notes = '', teamId = 1, phone = '', category = DRIVER_CATEGORY.LIGHT }) {
   requireWrite('driver.create');
   if (!name || !name.trim()) throw new Error('الاسم مطلوب');
   const id = await put('drivers', {
@@ -35,6 +57,7 @@ export async function createDriver({ name, status = STATUS.AVAILABLE, notes = ''
     notes,
     teamId: Number(teamId) || 1,
     phone: phone || '',
+    category: category || DRIVER_CATEGORY.LIGHT,
     createdAt: nowIso(),
     updatedAt: nowIso()
   });
@@ -42,7 +65,7 @@ export async function createDriver({ name, status = STATUS.AVAILABLE, notes = ''
     driverId: id, status, at: nowIso(), reason: 'initial'
   });
   await audit({ entity:'drivers', entityId:id, action:'create',
-    newValue:{ name, status, teamId } });
+    newValue:{ name, status, teamId, category } });
   return id;
 }
 

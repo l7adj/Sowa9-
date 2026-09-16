@@ -39,15 +39,15 @@ export async function seedDemoDataset() {
   let drivers = await all('drivers');
   if (drivers.length === 0) {
     const demoDrivers = [
-      { name: 'أحمد السائق', phone: '0550112233', teamId: teamA.id, status: 'AVAILABLE' },
-      { name: 'علي السائق', phone: '0550223344', teamId: teamA.id, status: 'AVAILABLE' },
-      { name: 'محمد السائق', phone: '0550334455', teamId: teamA.id, status: 'AVAILABLE' },
-      { name: 'عثمان السائق', phone: '0550445566', teamId: teamA.id, status: 'VACATION' },
-      { name: 'خالد السائق', phone: '0560112233', teamId: teamB.id, status: 'AVAILABLE' },
-      { name: 'طارق السائق', phone: '0560223344', teamId: teamB.id, status: 'AVAILABLE' },
-      { name: 'سالم السائق', phone: '0560334455', teamId: teamB.id, status: 'AVAILABLE' },
-      { name: 'عمر السائق', phone: '0570112233', teamId: teamC.id, status: 'AVAILABLE' },
-      { name: 'سعيد السائق', phone: '0570223344', teamId: teamC.id, status: 'AVAILABLE' }
+      { name: 'أحمد السائق (وزن خفيف)', phone: '0550112233', teamId: teamA.id, status: 'AVAILABLE', category: 'LIGHT' },
+      { name: 'علي السائق (وزن خفيف)', phone: '0550223344', teamId: teamA.id, status: 'AVAILABLE', category: 'LIGHT' },
+      { name: 'محمد السائق (وزن خفيف)', phone: '0550334455', teamId: teamA.id, status: 'AVAILABLE', category: 'LIGHT' },
+      { name: 'عثمان السائق (وزن خفيف)', phone: '0550445566', teamId: teamA.id, status: 'VACATION', category: 'LIGHT' },
+      { name: 'خالد السائق (نقل مشترك)', phone: '0560112233', teamId: teamB.id, status: 'AVAILABLE', category: 'SHARED' },
+      { name: 'طارق السائق (نقل مشترك)', phone: '0560223344', teamId: teamB.id, status: 'AVAILABLE', category: 'SHARED' },
+      { name: 'سالم السائق (نقل مشترك)', phone: '0560334455', teamId: teamB.id, status: 'AVAILABLE', category: 'SHARED' },
+      { name: 'عمر السائق (شامل)', phone: '0570112233', teamId: teamC.id, status: 'AVAILABLE', category: 'ALL' },
+      { name: 'سعيد السائق (شامل)', phone: '0570223344', teamId: teamC.id, status: 'AVAILABLE', category: 'ALL' }
     ];
 
     for (const d of demoDrivers) {
@@ -163,7 +163,7 @@ export async function seedDemoDataset() {
           missionId: dunyaMission.id,
           periodId: 'DEFAULT',
           periodCode: 'DEFAULT',
-          periodName: 'فترة الوردية',
+          periodName: 'فترة التكليف',
           dueDriverId: suggestion2.due?.id || suggestion2.proposed.id,
           plannedDriverId: suggestion2.proposed.id,
           startIso: s.toISOString(),

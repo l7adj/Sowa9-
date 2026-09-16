@@ -20,10 +20,16 @@ export async function evaluateDriverForShift({
   occurrenceId = null,
   periodId = null,
   targetTeamId = null,
-  excludeIds = []
+  excludeIds = [],
+  requiredCategory = null
 }) {
+  const driverCat = driver?.category || 'LIGHT';
+  const categoryMatch = !requiredCategory || requiredCategory === 'ALL' || driverCat === 'ALL' || driverCat === requiredCategory;
+
   const e = {
     driver,
+    driverCategory: driverCat,
+    categoryMatch,
     isAvailable: false,
     reasonAr: '',
     restMinutes: null,
@@ -36,6 +42,11 @@ export async function evaluateDriverForShift({
 
   if (!driver) {
     e.reasonAr = 'غير موجود';
+    return e;
+  }
+  if (!categoryMatch) {
+    e.reasonAr = `صنف غير مطابق (${driverCat === 'SHARED' ? 'نقل مشترك' : 'وزن خفيف'})`;
+    e.isAvailable = false;
     return e;
   }
   if (excludeIds.includes(driver.id)) {
@@ -129,6 +140,8 @@ export async function analyzePeriodAllocation({
   );
   const totalExcluded = [...new Set([...excludeIds, ...assignedDriverIds])];
 
+  const requiredCategory = period?.driverCategory || mission?.driverCategory || null;
+
   const evaluated = [];
   for (const d of allDrivers) {
     const res = await evaluateDriverForShift({
@@ -139,7 +152,8 @@ export async function analyzePeriodAllocation({
       occurrenceId,
       periodId: period.id || period.code,
       targetTeamId: targetTeamId || mission.teamId || null,
-      excludeIds: totalExcluded
+      excludeIds: totalExcluded,
+      requiredCategory
     });
     evaluated.push({
       ...res,
@@ -156,8 +170,9 @@ export async function analyzePeriodAllocation({
   const otherTeamsAvailable = evaluated.filter(e => e.isAvailable && !e.isSameTeam);
   const blockedDrivers = evaluated.filter(e => !e.isAvailable);
 
-  // Sort candidates by fairness (longest rest, restOk first)
+  // Sort candidates by category match, then fairness (longest rest, restOk first)
   const sortFn = (a, b) => {
+    if (a.categoryMatch !== b.categoryMatch) return a.categoryMatch ? -1 : 1;
     if (a.restOk !== b.restOk) return a.restOk ? -1 : 1;
     const ra = a.restMinutes == null ? 99999 : a.restMinutes;
     const rb = b.restMinutes == null ? 99999 : b.restMinutes;
@@ -223,21 +238,28 @@ export async function suggestForTurn({
   startIso,
   endIso,
   targetTeamId = null,
-  excludeIds = []
+  excludeIds = [],
+  requiredCategory = null
 }) {
   const restMinHours = await getSetting('restMinHours') || 8;
   const restMinMinutes = restMinHours * 60;
   const startDate = new Date(startIso);
   const endDate = new Date(endIso);
 
-  // Resolve target team from parameters or mission
+  // Resolve target team and required category from parameters or mission
   let effectiveTargetTeamId = targetTeamId;
+  let effectiveCategory = requiredCategory;
   let mission = null;
   if (missionId) {
     try {
       mission = await getMission(missionId);
       if (!effectiveTargetTeamId && mission?.teamId) {
         effectiveTargetTeamId = mission.teamId;
+      }
+      if (!effectiveCategory) {
+        const periods = mission?.periods || [];
+        const foundPeriod = periods.find(p => p.id === periodId || p.code === periodId);
+        effectiveCategory = foundPeriod?.driverCategory || mission?.driverCategory || null;
       }
     } catch {}
   }
@@ -249,14 +271,21 @@ export async function suggestForTurn({
   const teamMap = new Map(teams.map(t => [t.id, t]));
   const targetTeam = effectiveTargetTeamId ? teamMap.get(Number(effectiveTargetTeamId)) : null;
 
-  // Filter primary drivers: belong to target team, or all drivers if neutral/shared mission
-  const primaryDrivers = effectiveTargetTeamId
-    ? allDrivers.filter(d => Number(d.teamId) === Number(effectiveTargetTeamId))
-    : allDrivers;
+  // STRICT category isolation: Light drivers and Shared drivers NEVER compete or enter same queue!
+  const categoryFilter = (d) => {
+    if (!effectiveCategory || effectiveCategory === 'ALL') return true;
+    const cat = d.category || 'LIGHT';
+    return cat === 'ALL' || cat === effectiveCategory;
+  };
 
-  const externalDrivers = effectiveTargetTeamId
+  // Filter primary drivers: belong to target team and match required category
+  const primaryDrivers = (effectiveTargetTeamId
+    ? allDrivers.filter(d => Number(d.teamId) === Number(effectiveTargetTeamId))
+    : allDrivers).filter(categoryFilter);
+
+  const externalDrivers = (effectiveTargetTeamId
     ? allDrivers.filter(d => Number(d.teamId) !== Number(effectiveTargetTeamId))
-    : [];
+    : []).filter(categoryFilter);
 
   // Turn queue is maintained per mission + period for primary drivers
   const primaryIds = primaryDrivers.map(d => d.id);
@@ -283,7 +312,8 @@ export async function suggestForTurn({
       occurrenceId,
       periodId,
       targetTeamId: effectiveTargetTeamId,
-      excludeIds
+      excludeIds,
+      requiredCategory: effectiveCategory
     });
     const driverTeam = teamMap.get(item.driver.teamId) || { name: 'الفريق الرئيسي', id: item.driver.teamId || 1 };
     evaluatedPrimary.push({
@@ -309,7 +339,8 @@ export async function suggestForTurn({
       occurrenceId,
       periodId,
       targetTeamId: effectiveTargetTeamId,
-      excludeIds
+      excludeIds,
+      requiredCategory: effectiveCategory
     });
     const driverTeam = teamMap.get(drv.teamId) || { name: 'فريق خارجي', id: drv.teamId };
     evaluatedExternal.push({
@@ -489,7 +520,8 @@ export async function suggestMultipleForPeriod({
       startIso: range.start.toISOString(),
       endIso: range.end.toISOString(),
       targetTeamId,
-      excludeIds: excluded
+      excludeIds: excluded,
+      requiredCategory: period?.driverCategory || null
     });
     results.push(res);
     if (res.proposed) {
@@ -502,11 +534,11 @@ export async function suggestMultipleForPeriod({
 function buildReason(candidate, isDue, due, targetTeam = null) {
   const parts = [];
   if (isDue) {
-    parts.push(`${candidate.driver.name} هو صاحب الدور الحالي`);
+    parts.push(`${candidate.driver.name} هو المستحق بالدور الحالي`);
   } else {
-    parts.push(`${candidate.driver.name} هو البديل المتاح في الدور`);
+    parts.push(`${candidate.driver.name} هو البديل المؤهل في الدور`);
     if (due) {
-      parts.push(`${due.driver.name} (صاحب الدور) ${due.reasonAr}`);
+      parts.push(`${due.driver.name} (المستحق بالدور) ${due.reasonAr}`);
     }
   }
   if (targetTeam && candidate.isSameTeam) {

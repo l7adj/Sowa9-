@@ -120,6 +120,34 @@ export async function confirm(assignmentId, reason = '') {
   return next;
 }
 
+export async function updateAssignmentTiming(assignmentId, { startIso, endIso, driverId = null }) {
+  requireWrite('assign.create');
+  const a = await get('assignments', Number(assignmentId));
+  if (!a) throw new Error('التوزيع غير موجود');
+
+  const next = {
+    ...a,
+    startIso: startIso || a.startIso,
+    endIso: endIso || a.endIso,
+    ...(driverId ? {
+      plannedDriverId: Number(driverId),
+      actualDriverId: a.actualDriverId ? Number(driverId) : a.actualDriverId,
+      dueDriverId: a.dueDriverId || Number(driverId)
+    } : {}),
+    updatedAt: nowIso()
+  };
+
+  await put('assignments', next);
+  await audit({
+    entity: 'assignments',
+    entityId: assignmentId,
+    action: 'update_timing',
+    oldValue: { startIso: a.startIso, endIso: a.endIso, plannedDriverId: a.plannedDriverId },
+    newValue: { startIso: next.startIso, endIso: next.endIso, plannedDriverId: next.plannedDriverId }
+  });
+  return next;
+}
+
 export async function cancel(assignmentId, reason) {
   requireWrite('assign.cancel');
   if (!reason || !reason.trim()) throw new Error('سبب الإلغاء مطلوب');
